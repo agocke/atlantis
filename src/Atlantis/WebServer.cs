@@ -31,7 +31,7 @@ public sealed class WebServer
             while (!cancellationToken.IsCancellationRequested)
             {
                 var context = await _listener.GetContextAsync().WaitAsync(cancellationToken);
-                HandleRequest(context);
+                await HandleRequestAsync(context);
             }
         }
         catch (OperationCanceledException)
@@ -44,12 +44,12 @@ public sealed class WebServer
         }
     }
 
-    private static void HandleRequest(HttpListenerContext context)
+    private static async Task HandleRequestAsync(HttpListenerContext context)
     {
         byte[] buffer = Encoding.UTF8.GetBytes(HelloPageHtml);
         context.Response.ContentType = "text/html; charset=utf-8";
         context.Response.ContentLength64 = buffer.Length;
-        context.Response.OutputStream.Write(buffer, 0, buffer.Length);
+        await context.Response.OutputStream.WriteAsync(buffer);
         context.Response.Close();
     }
 }
