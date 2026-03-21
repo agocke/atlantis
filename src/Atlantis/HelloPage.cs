@@ -1,15 +1,17 @@
+using System.Reflection;
+
 namespace Atlantis;
 
 public static class HelloPage
 {
-    public const string Html =
-        """
-        <!DOCTYPE html>
-        <html>
-        <head><title>Atlantis</title></head>
-        <body>
-            <h1>Hello, World!</h1>
-        </body>
-        </html>
-        """;
+    public static string Html { get; } = LoadHtml();
+
+    private static string LoadHtml()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        using var stream = assembly.GetManifestResourceStream("Atlantis.frontend.index.html")
+            ?? throw new InvalidOperationException("Embedded resource 'Atlantis.frontend.index.html' not found.");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
 }
