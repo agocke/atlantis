@@ -1,5 +1,5 @@
 using Atlantis;
-using PhotinoNET;
+using Photino.NET;
 
 var window = new PhotinoWindow()
     .SetTitle("Atlantis")
