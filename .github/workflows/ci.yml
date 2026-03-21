@@ -27,8 +27,14 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore src/Atlantis/Atlantis.csproj
 
+      - name: Restore test dependencies
+        run: dotnet restore src/Atlantis.Tests/Atlantis.Tests.csproj
+
       - name: Build
         run: dotnet build src/Atlantis/Atlantis.csproj --no-restore
+
+      - name: Test
+        run: dotnet test src/Atlantis.Tests/Atlantis.Tests.csproj --no-restore --verbosity normal
 
       - name: Publish (Native AOT)
         run: dotnet publish src/Atlantis/Atlantis.csproj --no-restore -c Release
