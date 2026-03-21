@@ -1,5 +1,10 @@
 using Atlantis;
+using PhotinoNET;
 
-var server = new WebServer("http://localhost:5000/");
-Console.WriteLine("Listening on http://localhost:5000/");
-await server.RunAsync(CancellationToken.None);
+var window = new PhotinoWindow()
+    .SetTitle("Atlantis")
+    .SetSize(800, 600)
+    .Center()
+    .LoadRawString(HelloPage.Html);
+
+window.WaitForClose();
