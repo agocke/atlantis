@@ -2,103 +2,77 @@
 
 ## Overview
 
-Atlantis provides a hybrid architecture where C# code can run in two places:
+Atlantis provides a bridge between JavaScript (in the webview) and C# (native host). Methods marked with `[JSExport]` become callable from JavaScript.
 
-- **Native Host** (NativeAOT): Full OS access — file system, networking, hardware
-- **WebView WASM** (NativeAOT-LLVM): Fast, synchronous calls from JavaScript
+## Phase 1: IPC Bridge (Current Focus)
 
-The framework automatically routes each method to the optimal execution path.
-
-## The Core Idea
-
-```csharp
-[JSExport]  // = "JavaScript can call this"
-```
-
-That's it. Mark methods with `[JSExport]` to expose them to JavaScript. The framework analyzes each method and decides the best way to execute it:
-
-| Method uses... | Runs in... | From JS... |
-|----------------|------------|------------|
-| Pure computation only | WASM (webview) | Sync |
-| System.IO, networking, etc. | Native host (IPC) | Async |
-
-## Example
+All `[JSExport]` methods run on the native host with full .NET API access. Calls from JavaScript are asynchronous.
 
 ```csharp
 using System.Runtime.InteropServices.JavaScript;
 
 public static partial class Api
 {
-    [JSExport]  // → WASM (pure, no OS deps)
+    [JSExport]
     public static bool ValidateEmail(string email) 
         => email.Contains('@') && email.Contains('.');
     
-    [JSExport]  // → IPC (uses System.IO)
+    [JSExport]
     public static string[] ListFiles(string path) 
         => Directory.GetFiles(path);
-    
-    // No attribute → not callable from JS
-    internal static void HelperMethod() { }
 }
 ```
 
 ```javascript
-// Sync — runs in WASM, ~nanoseconds
-const valid = atlantis.Api.ValidateEmail("test@example.com");
-
-// Async — goes through IPC to native host
+// All calls are async (IPC to native host)
+const valid = await atlantis.Api.ValidateEmail("test@example.com");
 const files = await atlantis.Api.ListFiles("/documents");
 ```
 
-## Routing Decision Logic
+### Benefits
+- **Simple** — One execution model, predictable behavior
+- **Full API access** — System.IO, networking, everything works
+- **Easy debugging** — All code runs in one place
+
+## Phase 2: WASM Head (Opt-in, for Performance)
+
+When you hit performance bottlenecks (e.g., validation called on every keystroke), add a separate WASM project for latency-sensitive code.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  [JSExport] method                                          │
-└─────────────────────────────┬───────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Does it use OS-dependent APIs?                             │
-│  (System.IO, System.Net, System.Diagnostics.Process, etc.)  │
-└──────────────┬──────────────────────────────┬───────────────┘
-               │ No                           │ Yes
-               ▼                              ▼
-┌──────────────────────────┐    ┌──────────────────────────────┐
-│  Compile to WASM         │    │  Generate IPC handler        │
-│  • Sync calls from JS    │    │  • Async calls from JS       │
-│  • Runs in webview       │    │  • Runs on native host       │
-│  • ~nanosecond latency   │    │  • Full OS access            │
-└──────────────────────────┘    └──────────────────────────────┘
+src/
+├── MyApp/                  # Host (full .NET APIs, IPC)
+│   └── Api.cs
+│
+└── MyApp.Wasm/             # WASM head (browser-wasm target)
+    └── FastApi.cs          # Runs in webview, sync from JS
 ```
-
-### WASM-Compatible (runs in webview)
-
-- Primitive operations, math, string manipulation
-- LINQ, collection operations
-- JSON serialization (System.Text.Json)
-- Regular expressions
-- Custom pure logic
-
-### Requires IPC (runs on host)
-
-- `System.IO` — File, Directory, Path operations
-- `System.Net` — HttpClient, sockets
-- `System.Diagnostics` — Process, debugging
-- `System.Environment` — Environment variables
-- Platform-specific APIs — Clipboard, notifications, window management
-
-## Overriding the Default
 
 ```csharp
-[JSExport(ForceIPC = true)]   // Always use IPC, even if WASM-compatible
-public static decimal Calculate(string data) => ...;
-
-[JSExport(ForceWasm = true)]  // Must run in WASM (build error if incompatible)
-public static int FastHash(string input) => ...;
+// MyApp.Wasm/FastApi.cs
+// Only WASM-compatible APIs available — compiler enforces this
+[JSExport]
+public static bool ValidateEmail(string email) 
+    => email.Contains('@') && email.Contains('.');
 ```
 
+```javascript
+// Explicit choice: sync (WASM) vs async (IPC)
+const valid = atlantis.FastApi.ValidateEmail(input);      // sync, ~ns
+const files = await atlantis.Api.ListFiles('/docs');       // async, ~ms
+```
+
+### When to Add WASM
+
+| Symptom | Solution |
+|---------|----------|
+| Input validation feels laggy | Move to WASM |
+| Formatting called in render loop | Move to WASM |
+| Pure computation on every frame | Move to WASM |
+| Need file/network access | Keep on host |
+
 ## Architecture
+
+### Phase 1: IPC Only
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -106,7 +80,8 @@ public static int FastHash(string input) => ...;
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
 │  │  • Window management (Photino / WKWebView)                            │  │
 │  │  • IPC message dispatcher                                             │  │
-│  │  • [JSExport] methods that use OS APIs                                │  │
+│  │  • All [JSExport] methods                                             │  │
+│  │  • Full .NET API access                                               │  │
 │  └─────────────────────────────────────┬─────────────────────────────────┘  │
 └────────────────────────────────────────┼────────────────────────────────────┘
                                          │ IPC: MessagePack over postMessage
@@ -115,20 +90,41 @@ public static int FastHash(string input) => ...;
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
 │  │  JavaScript                                                           │  │
 │  │  • Auto-generated bridge (atlantis.*)                                 │  │
-│  │  • Routes sync calls → WASM, async calls → IPC                        │  │
+│  │  • All calls async                                                    │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Phase 2: With WASM Head (opt-in)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Native Host Process (NativeAOT)                                            │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  • [JSExport] methods from MyApp (IPC)                                │  │
+│  │  • Full .NET API access                                               │  │
 │  └─────────────────────────────────────┬─────────────────────────────────┘  │
-│                                        │ JSImport/JSExport                  │
+└────────────────────────────────────────┼────────────────────────────────────┘
+                                         │ IPC (async)
+┌────────────────────────────────────────▼────────────────────────────────────┐
+│  WebView                                                                     │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  JavaScript                                                           │  │
+│  │  • atlantis.Api.* → IPC (async)                                       │  │
+│  │  • atlantis.FastApi.* → WASM (sync)                                   │  │
+│  └─────────────────────────────────────┬─────────────────────────────────┘  │
+│                                        │ JSExport (sync)                    │
 │  ┌─────────────────────────────────────▼─────────────────────────────────┐  │
 │  │  WASM Module (NativeAOT-LLVM)                                         │  │
-│  │  • [JSExport] methods that are pure / WASM-compatible                 │  │
-│  │  • Same C# code, compiled to WebAssembly                              │  │
+│  │  • [JSExport] methods from MyApp.Wasm                                 │  │
+│  │  • WASM-compatible APIs only                                          │  │
 │  └───────────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Serialization
 
-Communication between WASM and the native host uses [MessagePack](https://msgpack.org/) via Serde.MsgPack for efficient binary serialization:
+Communication uses [MessagePack](https://msgpack.org/) via Serde.MsgPack:
 
 - ~50% smaller than JSON
 - 2-4x faster to serialize/deserialize
@@ -136,21 +132,25 @@ Communication between WASM and the native host uses [MessagePack](https://msgpac
 
 ## TypeScript Support
 
-The build generates TypeScript definitions for all exported methods:
+The build generates TypeScript definitions:
 
 ```typescript
 // Generated: atlantis.d.ts
 declare namespace atlantis {
   namespace Api {
-    function ValidateEmail(email: string): boolean;           // sync
-    function ListFiles(path: string): Promise<string[]>;      // async
+    function ValidateEmail(email: string): Promise<boolean>;
+    function ListFiles(path: string): Promise<string[]>;
+  }
+  
+  // If WASM head is added:
+  namespace FastApi {
+    function ValidateEmail(email: string): boolean;  // sync!
   }
 }
 ```
 
 ## Implementation Status
 
-- [ ] Phase 1: IPC bridge with MessagePack
-- [ ] Phase 2: WASM compilation and routing
-- [ ] Phase 3: Analyzer for routing decisions
-- [ ] Phase 4: SDK for single-project experience
+- [ ] Phase 1: IPC bridge — `[JSExport]` methods callable via async IPC
+- [ ] Phase 2: WASM head — Opt-in separate project for sync calls
+- [ ] Phase 3: Shared types — Common DTOs between host and WASM
