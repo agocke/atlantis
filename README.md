@@ -86,3 +86,7 @@ The app uses conditional compilation (`#if IOS`) to share code between platforms
 
 - **Desktop**: Uses [Photino.NET](https://github.com/nicegui/photino.NET) for native webview
 - **iOS**: Pure C# implementation using `objc_msgSend` P/Invoke calls to create UIWindow, UIViewController, and WKWebView directly through the Objective-C runtime
+
+## Documentation
+
+- [JavaScript Bridge Architecture](docs/js-bridge.md) — How C#/JS interop works
