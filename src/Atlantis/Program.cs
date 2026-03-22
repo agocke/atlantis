@@ -1,4 +1,10 @@
 using Atlantis;
+
+#if IOS
+using Atlantis.Platforms.iOS;
+iOSApp.Run(HelloPage.Html);
+#else
+// Desktop implementation using Photino
 using Photino.NET;
 
 var window = new PhotinoWindow()
@@ -8,3 +14,4 @@ var window = new PhotinoWindow()
     .LoadRawString(HelloPage.Html);
 
 window.WaitForClose();
+#endif
