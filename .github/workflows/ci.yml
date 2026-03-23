@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 jobs:
   build:
@@ -83,3 +84,30 @@ jobs:
       - name: Push to GitHub Packages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: dotnet nuget push artifacts/package/release/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
+
+  publish-nuget:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [cli-tool]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all NuGet artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nuget-*
+          path: nupkgs
+          merge-multiple: true
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: NuGet login (OIDC Trusted Publishing)
+        uses: NuGet/login@v1
+        id: nuget-login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push to nuget.org
+        run: dotnet nuget push "nupkgs/*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
