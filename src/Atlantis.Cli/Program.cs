@@ -24,6 +24,7 @@ public partial record AtlCommand
         if (SubCommand is AtlSubCommand.Init init) return init.RunAsync();
         if (SubCommand is AtlSubCommand.Generate generate) return generate.RunAsync();
         if (SubCommand is AtlSubCommand.Build build) return build.RunAsync();
+        if (SubCommand is AtlSubCommand.Update update) return update.RunAsync();
         
         Console.WriteLine("Use --help for usage information.");
         return Task.FromResult(1);
@@ -75,5 +76,17 @@ public abstract partial record AtlSubCommand
         public bool? Verbose { get; init; }
 
         public Task<int> RunAsync() => BuildCommand.RunAsync(Project, Rid, Configuration ?? "Release", Verbose ?? false);
+    }
+
+    [Command("update", Summary = "Update atl to the latest version")]
+    public sealed partial record Update : AtlSubCommand
+    {
+        [CommandOption("--check", Description = "Check for updates without installing")]
+        public bool? Check { get; init; }
+
+        [CommandOption("-v|--verbose", Description = "Show verbose output")]
+        public bool? Verbose { get; init; }
+
+        public Task<int> RunAsync() => UpdateCommand.RunAsync(Check ?? false, Verbose ?? false);
     }
 }
