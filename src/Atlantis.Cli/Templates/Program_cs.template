@@ -1,0 +1,27 @@
+using Photino.NET;
+
+var html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>{{ProjectName}}</title>
+        <script src="atlantis.js"></script>
+    </head>
+    <body>
+        <h1>Welcome to {{ProjectName}}</h1>
+        <p>Edit src/frontend/index.html to get started.</p>
+        <script>
+            // Example: Call your C# API
+            // const result = await atlantis.Api.Hello("World");
+        </script>
+    </body>
+    </html>
+    """;
+
+var window = new PhotinoWindow()
+    .SetTitle("{{ProjectName}}")
+    .SetSize(800, 600)
+    .Center()
+    .LoadRawString(html);
+
+window.WaitForClose();
