@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   build:
@@ -78,3 +79,7 @@ jobs:
         with:
           name: nuget-${{ matrix.rid }}
           path: artifacts/package/release/*.nupkg
+
+      - name: Push to GitHub Packages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: dotnet nuget push artifacts/package/release/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
