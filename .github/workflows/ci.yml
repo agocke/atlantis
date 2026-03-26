@@ -89,7 +89,11 @@ jobs:
       - name: Push to GitHub Packages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
-        run: dotnet nuget push 'artifacts/package/release/*.nupkg' --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
+        run: |
+          shopt -s nullglob
+          for f in artifacts/package/release/*.nupkg; do
+            dotnet nuget push "$f" --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
+          done
 
       # Publish to nuget.org (only from linux to avoid duplicate pushes)
       - name: Login to nuget.org (OIDC)
