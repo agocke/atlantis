@@ -1,5 +1,6 @@
 <Project>
   <PropertyGroup>
     <LangVersion>latest</LangVersion>
+    <UseArtifactsOutput>true</UseArtifactsOutput>
   </PropertyGroup>
 </Project>

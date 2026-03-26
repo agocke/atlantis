@@ -22,7 +22,7 @@ public partial record AtlCommand
     public Task<int> RunAsync()
     {
         if (SubCommand is AtlSubCommand.Init init) return init.RunAsync();
-        if (SubCommand is AtlSubCommand.Generate generate) return generate.RunAsync();
+        if (SubCommand is AtlSubCommand.Bindgen bindgen) return bindgen.RunAsync();
         if (SubCommand is AtlSubCommand.Build build) return build.RunAsync();
         if (SubCommand is AtlSubCommand.Update update) return update.RunAsync();
         
@@ -40,7 +40,7 @@ public abstract partial record AtlSubCommand
     public sealed partial record Init : AtlSubCommand
     {
         [CommandParameter(0, "name", Description = "Name of the project to create")]
-        public required string Name { get; init; }
+        public string? Name { get; init; }
 
         [CommandOption("-o|--output", Description = "Output directory (defaults to current directory)")]
         public string? Output { get; init; }
@@ -48,8 +48,8 @@ public abstract partial record AtlSubCommand
         public Task<int> RunAsync() => InitCommand.RunAsync(Name, Output);
     }
 
-    [Command("generate", Summary = "Generate JavaScript/TypeScript bindings from [JSExport] methods")]
-    public sealed partial record Generate : AtlSubCommand
+    [Command("bindgen", Summary = "Generate JavaScript/TypeScript bindings from [JSExport] methods")]
+    public sealed partial record Bindgen : AtlSubCommand
     {
         [CommandOption("-s|--source", Description = "Source directory containing C# files")]
         public string? Source { get; init; }
