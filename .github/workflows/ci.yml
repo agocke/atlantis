@@ -53,14 +53,14 @@ jobs:
 
       - name: Pack CLI pointer package
         if: matrix.rid == 'linux-x64'
-        run: dotnet pack src/Atlantis.Cli/Atlantis.Cli.csproj -c Release --no-build
+        run: dotnet pack src/Atlantis.Cli/Atlantis.Cli.csproj -c Release --no-build --version-suffix ${{ steps.version.outputs.suffix }}
 
       - name: Pack CLI AOT package (${{ matrix.rid }})
-        run: dotnet pack src/Atlantis.Cli/Atlantis.Cli.csproj -c Release -r ${{ matrix.rid }}
+        run: dotnet pack src/Atlantis.Cli/Atlantis.Cli.csproj -c Release -r ${{ matrix.rid }} --version-suffix ${{ steps.version.outputs.suffix }}
 
       - name: Pack CLI fallback package
         if: matrix.rid == 'linux-x64'
-        run: dotnet pack src/Atlantis.Cli/Atlantis.Cli.csproj -c Release -r any -p:PublishAot=false
+        run: dotnet pack src/Atlantis.Cli/Atlantis.Cli.csproj -c Release -r any -p:PublishAot=false --version-suffix ${{ steps.version.outputs.suffix }}
 
       # Build Analyzers (only on linux - netstandard2.0 is cross-platform)
       - name: Build Analyzers
@@ -101,4 +101,4 @@ jobs:
 
       - name: Push to nuget.org
         if: matrix.rid == 'linux-x64' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: dotnet nuget push artifacts/my-sdk.nupkg --api-key ${{steps.login.outputs.NUGET_API_KEY}} --source https://api.nuget.org/v3/index.json
+        run: dotnet nuget push 'artifacts/package/release/*.nupkg' --api-key ${{steps.login.outputs.NUGET_API_KEY}} --source https://api.nuget.org/v3/index.json --skip-duplicate
