@@ -1,0 +1,124 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write  # For OIDC trusted publishing to nuget.org
+
+jobs:
+  release-analyzers:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build Analyzers
+        run: dotnet build src/Atlantis.Analyzers/Atlantis.Analyzers.csproj -c Release
+
+      - name: Pack Analyzers (stable)
+        run: dotnet pack src/Atlantis.Analyzers/Atlantis.Analyzers.csproj -c Release --no-build -p:VersionPrefix=${{ steps.version.outputs.version }}
+
+      - name: Upload NuGet package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-analyzers-${{ steps.version.outputs.version }}
+          path: artifacts/package/release/Atlantis.Analyzers.*.nupkg
+
+      - name: Push to GitHub Packages
+        run: dotnet nuget push 'artifacts/package/release/Atlantis.Analyzers.*.nupkg' --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
+
+      - name: Login to nuget.org (OIDC)
+        uses: NuGet/login@v1
+        with:
+          username: ${{ secrets.NUGET_USER }}
+
+      - name: Push to nuget.org
+        run: dotnet nuget push 'artifacts/package/release/Atlantis.Analyzers.*.nupkg' --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+  release-cli:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build CLI
+        run: dotnet build src/Atlantis.Cli/Atlantis.Cli.csproj -c Release -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Pack pointer package
+        if: matrix.rid == 'linux-x64'
+        run: dotnet pack src/Atlantis.Cli/Atlantis.Cli.csproj -c Release --no-build -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Pack AOT package (${{ matrix.rid }})
+        run: dotnet pack src/Atlantis.Cli/Atlantis.Cli.csproj -c Release -r ${{ matrix.rid }} -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Pack fallback package
+        if: matrix.rid == 'linux-x64'
+        run: dotnet pack src/Atlantis.Cli/Atlantis.Cli.csproj -c Release -r any -p:PublishAot=false -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Upload NuGet packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-cli-${{ matrix.rid }}-${{ steps.version.outputs.version }}
+          path: artifacts/package/release/*.nupkg
+
+      - name: Push to GitHub Packages
+        shell: bash
+        run: dotnet nuget push 'artifacts/package/release/*.nupkg' --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
+
+  publish-cli-nuget:
+    needs: release-cli
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Download all CLI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nuget-cli-*
+          path: packages
+          merge-multiple: true
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Login to nuget.org (OIDC)
+        uses: NuGet/login@v1
+        with:
+          username: ${{ secrets.NUGET_USER }}
+
+      - name: Push to nuget.org
+        run: dotnet nuget push 'packages/*.nupkg' --source https://api.nuget.org/v3/index.json --skip-duplicate

@@ -9,38 +9,10 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write  # For OIDC trusted publishing to nuget.org
 
 jobs:
   build:
-    strategy:
-      matrix:
-        os: [ windows-latest, ubuntu-latest, macos-latest ]
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Restore dependencies
-        run: dotnet restore src/Atlantis/Atlantis.csproj
-
-      - name: Restore test dependencies
-        run: dotnet restore tests/Atlantis.Tests/Atlantis.Tests.csproj
-
-      - name: Build
-        run: dotnet build src/Atlantis/Atlantis.csproj --no-restore
-
-      - name: Test
-        run: dotnet test tests/Atlantis.Tests/Atlantis.Tests.csproj --no-restore --verbosity normal
-
-      - name: Publish (Native AOT)
-        run: dotnet publish src/Atlantis/Atlantis.csproj --no-restore -c Release
-
-  cli-tool:
     strategy:
       matrix:
         include:
@@ -60,26 +32,72 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Set version suffix
+        id: version
+        shell: bash
+        run: echo "suffix=ci.${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      # Build and test Atlantis
+      - name: Build Atlantis
+        run: dotnet build src/Atlantis/Atlantis.csproj -c Release
+
+      - name: Test
+        run: dotnet test tests/Atlantis.Tests/Atlantis.Tests.csproj -c Release --verbosity normal
+
+      - name: Publish Atlantis (Native AOT)
+        run: dotnet publish src/Atlantis/Atlantis.csproj -c Release
+
+      # Build CLI
       - name: Build CLI
         run: dotnet build src/Atlantis.Cli/Atlantis.Cli.csproj -c Release
 
-      - name: Pack pointer package
+      - name: Pack CLI pointer package
         if: matrix.rid == 'linux-x64'
         run: dotnet pack src/Atlantis.Cli/Atlantis.Cli.csproj -c Release --no-build
 
-      - name: Pack AOT package (${{ matrix.rid }})
+      - name: Pack CLI AOT package (${{ matrix.rid }})
         run: dotnet pack src/Atlantis.Cli/Atlantis.Cli.csproj -c Release -r ${{ matrix.rid }}
 
-      - name: Pack fallback package
+      - name: Pack CLI fallback package
         if: matrix.rid == 'linux-x64'
         run: dotnet pack src/Atlantis.Cli/Atlantis.Cli.csproj -c Release -r any -p:PublishAot=false
 
-      - name: Upload NuGet packages
+      # Build Analyzers (only on linux - netstandard2.0 is cross-platform)
+      - name: Build Analyzers
+        if: matrix.rid == 'linux-x64'
+        run: dotnet build src/Atlantis.Analyzers/Atlantis.Analyzers.csproj -c Release
+
+      - name: Pack Analyzers
+        if: matrix.rid == 'linux-x64'
+        run: dotnet pack src/Atlantis.Analyzers/Atlantis.Analyzers.csproj -c Release --no-build --version-suffix ${{ steps.version.outputs.suffix }}
+
+      # Upload artifacts
+      - name: Upload CLI packages
         uses: actions/upload-artifact@v4
         with:
-          name: nuget-${{ matrix.rid }}
-          path: artifacts/package/release/*.nupkg
+          name: nuget-cli-${{ matrix.rid }}
+          path: artifacts/package/release/atl.*.nupkg
 
+      - name: Upload Analyzer package
+        if: matrix.rid == 'linux-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-analyzers
+          path: artifacts/package/release/Atlantis.Analyzers.*.nupkg
+
+      # Publish to GitHub Packages
       - name: Push to GitHub Packages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: dotnet nuget push artifacts/package/release/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
+        shell: bash
+        run: dotnet nuget push 'artifacts/package/release/*.nupkg' --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
+
+      # Publish to nuget.org (only from linux to avoid duplicate pushes)
+      - name: Login to nuget.org (OIDC)
+        if: matrix.rid == 'linux-x64' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: NuGet/login@v1
+        with:
+          username: ${{ secrets.NUGET_USER }}
+
+      - name: Push to nuget.org
+        if: matrix.rid == 'linux-x64' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: dotnet nuget push 'artifacts/package/release/*.nupkg' --source https://api.nuget.org/v3/index.json --skip-duplicate

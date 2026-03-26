@@ -4,40 +4,64 @@ namespace Atlantis.Cli.Commands;
 
 public static class InitCommand
 {
-    public static async Task<int> RunAsync(string name, string? output)
+    public static async Task<int> RunAsync(string? name, string? output)
     {
         var targetDir = output ?? Directory.GetCurrentDirectory();
-        var projectDir = Path.Combine(targetDir, name);
+        
+        // If no name provided, initialize in current directory using folder name
+        string projectDir;
+        string projectName;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            projectDir = targetDir;
+            projectName = Path.GetFileName(Path.GetFullPath(targetDir));
+        }
+        else
+        {
+            projectDir = Path.Combine(targetDir, name);
+            projectName = name;
+        }
 
-        if (Directory.Exists(projectDir))
+        // Check if already initialized (only for new subdirectory case)
+        if (name != null && Directory.Exists(projectDir))
         {
             Console.Error.WriteLine($"Error: Directory '{projectDir}' already exists.");
             return 1;
         }
 
-        Console.WriteLine($"Creating Atlantis project '{name}'...");
+        // Check if current directory already has Atlantis files
+        if (name == null && File.Exists(Path.Combine(projectDir, "Directory.Build.props")))
+        {
+            Console.Error.WriteLine("Error: Current directory appears to already be an Atlantis project.");
+            return 1;
+        }
+
+        Console.WriteLine($"Creating Atlantis project '{projectName}'...");
 
         // Create directory structure
         Directory.CreateDirectory(projectDir);
-        Directory.CreateDirectory(Path.Combine(projectDir, "src", name));
+        Directory.CreateDirectory(Path.Combine(projectDir, "src", projectName));
         Directory.CreateDirectory(Path.Combine(projectDir, "src", "frontend"));
 
         // Write template files
-        await WriteTemplate("Project.csproj.template", Path.Combine(projectDir, "src", name, $"{name}.csproj"), name);
-        await WriteTemplate("Program_cs.template", Path.Combine(projectDir, "src", name, "Program.cs"), name);
-        await WriteTemplate("Api_cs.template", Path.Combine(projectDir, "src", name, "Api.cs"), name);
-        await WriteTemplate("index.html.template", Path.Combine(projectDir, "src", "frontend", "index.html"), name);
-        await WriteTemplate("Solution.sln.template", Path.Combine(projectDir, $"{name}.sln"), name);
-        await WriteTemplate("Directory.Build.props.template", Path.Combine(projectDir, "Directory.Build.props"), name);
-        await WriteTemplate("gitignore.template", Path.Combine(projectDir, ".gitignore"), name);
+        await WriteTemplate("Project.csproj.template", Path.Combine(projectDir, "src", projectName, $"{projectName}.csproj"), projectName);
+        await WriteTemplate("Program_cs.template", Path.Combine(projectDir, "src", projectName, "Program.cs"), projectName);
+        await WriteTemplate("Api_cs.template", Path.Combine(projectDir, "src", projectName, "Api.cs"), projectName);
+        await WriteTemplate("index.html.template", Path.Combine(projectDir, "src", "frontend", "index.html"), projectName);
+        await WriteTemplate("Solution.sln.template", Path.Combine(projectDir, $"{projectName}.sln"), projectName);
+        await WriteTemplate("Directory.Build.props.template", Path.Combine(projectDir, "Directory.Build.props"), projectName);
+        await WriteTemplate("gitignore.template", Path.Combine(projectDir, ".gitignore"), projectName);
 
         Console.WriteLine();
         Console.WriteLine($"✓ Created project at {projectDir}");
         Console.WriteLine();
         Console.WriteLine("Next steps:");
-        Console.WriteLine($"  cd {name}");
-        Console.WriteLine($"  dotnet build src/{name}");
-        Console.WriteLine($"  dotnet run --project src/{name}");
+        if (name != null)
+        {
+            Console.WriteLine($"  cd {projectName}");
+        }
+        Console.WriteLine($"  dotnet build src/{projectName}");
+        Console.WriteLine($"  dotnet run --project src/{projectName}");
         
         return 0;
     }

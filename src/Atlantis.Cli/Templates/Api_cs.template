@@ -1,21 +1,26 @@
-using System.Runtime.InteropServices.JavaScript;
-
 namespace {{ProjectName}};
 
 /// <summary>
+/// Marks a method for export to JavaScript via the Atlantis bridge.
+/// Run 'atl bindgen' to regenerate atlantis.js and atlantis.d.ts.
+/// </summary>
+[AttributeUsage(AttributeTargets.Method)]
+public sealed class AtlExportAttribute : Attribute { }
+
+/// <summary>
 /// API methods exposed to JavaScript via the Atlantis bridge.
-/// Mark methods with [JSExport] to make them callable from the webview.
-/// Run 'atl generate' to regenerate atlantis.js and atlantis.d.ts.
+/// Mark methods with [AtlExport] to make them callable from the webview.
+/// Run 'atl bindgen' to regenerate atlantis.js and atlantis.d.ts.
 /// </summary>
 public static partial class Api
 {
-    [JSExport]
+    [AtlExport]
     public static string Hello(string name)
     {
         return $"Hello, {name}!";
     }
 
-    [JSExport]
+    [AtlExport]
     public static string[] ListFiles(string path)
     {
         if (!Directory.Exists(path))
