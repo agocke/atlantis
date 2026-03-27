@@ -88,7 +88,11 @@ jobs:
       # Publish to GitHub Packages
       - name: Push to GitHub Packages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: dotnet nuget push artifacts/package/release/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
+        shell: bash
+        run: |
+          for pkg in artifacts/package/release/*.nupkg; do
+            dotnet nuget push "$pkg" --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
+          done
 
   # Publish all packages to nuget.org after all builds complete
   publish-nuget:
