@@ -116,6 +116,7 @@ public static class UpdateCommand
         }
         
         args.Add("atl");
+        args.Add("--prerelease");
 
         if (verbose)
         {
