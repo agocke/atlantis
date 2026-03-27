@@ -88,16 +88,37 @@ jobs:
       # Publish to GitHub Packages
       - name: Push to GitHub Packages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: dotnet nuget push "artifacts/package/release/*.nupkg" --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
+        run: dotnet nuget push artifacts/package/release/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
 
-      # Publish to nuget.org (only from linux to avoid duplicate pushes)
+  # Publish all packages to nuget.org after all builds complete
+  publish-nuget:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all CLI packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nuget-cli-*
+          path: packages
+          merge-multiple: true
+
+      - name: Download analyzer package
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-analyzers
+          path: packages
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
       - name: Login to nuget.org (OIDC)
-        if: matrix.rid == 'linux-x64' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: NuGet/login@v1
         id: login
         with:
           user: ${{ secrets.NUGET_USER }}
 
       - name: Push to nuget.org
-        if: matrix.rid == 'linux-x64' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: dotnet nuget push "artifacts/package/release/*.nupkg" --api-key ${{steps.login.outputs.NUGET_API_KEY}} --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: dotnet nuget push "packages/*.nupkg" --api-key ${{steps.login.outputs.NUGET_API_KEY}} --source https://api.nuget.org/v3/index.json --skip-duplicate
