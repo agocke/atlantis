@@ -88,11 +88,7 @@ jobs:
       # Publish to GitHub Packages
       - name: Push to GitHub Packages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          for f in artifacts/package/release/*.nupkg; do
-            dotnet nuget push "$f" --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
-          done
+        run: dotnet nuget push "artifacts/package/release/*.nupkg" --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
 
       # Publish to nuget.org (only from linux to avoid duplicate pushes)
       - name: Login to nuget.org (OIDC)
@@ -104,8 +100,4 @@ jobs:
 
       - name: Push to nuget.org
         if: matrix.rid == 'linux-x64' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          for f in artifacts/package/release/*.nupkg; do
-            dotnet nuget push "$f" --api-key ${{steps.login.outputs.NUGET_API_KEY}} --source https://api.nuget.org/v3/index.json --skip-duplicate
-          done
+        run: dotnet nuget push "artifacts/package/release/*.nupkg" --api-key ${{steps.login.outputs.NUGET_API_KEY}} --source https://api.nuget.org/v3/index.json --skip-duplicate
