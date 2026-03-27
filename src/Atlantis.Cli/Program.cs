@@ -24,6 +24,8 @@ public partial record AtlCommand
         if (SubCommand is AtlSubCommand.Init init) return init.RunAsync();
         if (SubCommand is AtlSubCommand.Bindgen bindgen) return bindgen.RunAsync();
         if (SubCommand is AtlSubCommand.Build build) return build.RunAsync();
+        if (SubCommand is AtlSubCommand.Run run) return run.RunAsync();
+        if (SubCommand is AtlSubCommand.Fix fix) return fix.RunAsync();
         if (SubCommand is AtlSubCommand.Update update) return update.RunAsync();
         
         Console.WriteLine("Use --help for usage information.");
@@ -88,5 +90,38 @@ public abstract partial record AtlSubCommand
         public bool? Verbose { get; init; }
 
         public Task<int> RunAsync() => UpdateCommand.RunAsync(Check ?? false, Verbose ?? false);
+    }
+
+    [Command("run", Summary = "Run the Atlantis application")]
+    public sealed partial record Run : AtlSubCommand
+    {
+        [CommandOption("-p|--project", Description = "Path to the .csproj file (auto-detected if not specified)")]
+        public string? Project { get; init; }
+
+        [CommandOption("-c|--configuration", Description = "Build configuration (default: Debug)")]
+        public string? Configuration { get; init; }
+
+        [CommandOption("-v|--verbose", Description = "Show verbose output")]
+        public bool? Verbose { get; init; }
+
+        [CommandParameter(0, "args", Description = "Arguments to pass to the application")]
+        public string[]? Args { get; init; }
+
+        public Task<int> RunAsync() => RunCommand.RunAsync(Project, Configuration, Verbose ?? false, Args ?? []);
+    }
+
+    [Command("fix", Summary = "Apply code fixes for Atlantis migration issues")]
+    public sealed partial record Fix : AtlSubCommand
+    {
+        [CommandOption("-p|--project", Description = "Path to the .csproj file (auto-detected if not specified)")]
+        public string? Project { get; init; }
+
+        [CommandOption("--dry-run", Description = "Show what would be fixed without making changes")]
+        public bool? DryRun { get; init; }
+
+        [CommandOption("-v|--verbose", Description = "Show verbose output")]
+        public bool? Verbose { get; init; }
+
+        public Task<int> RunAsync() => FixCommand.RunAsync(Project, DryRun ?? false, Verbose ?? false);
     }
 }
