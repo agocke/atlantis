@@ -2,14 +2,22 @@ namespace Atlantis.Cli.Commands;
 
 public static class GenerateCommand
 {
-    public static async Task<int> RunAsync(string? source, string? output)
+    public static async Task<int> RunAsync(string? source, string? output, string? path)
     {
-        var sourceDir = source ?? Directory.GetCurrentDirectory();
+        // Source may be given as --source, a positional target (a directory or a
+        // .csproj, whose directory is used), or default to the current directory.
+        var sourceDir = ResolveSourceDir(source ?? path);
         // Bindings belong to the app project's embedded web frontend, so default the
         // output to <project>/frontend rather than the project root.
         var outputDir = output ?? Path.Combine(sourceDir, "frontend");
 
         Console.WriteLine($"Scanning {sourceDir} for [AtlExport] methods...");
+
+        if (!Directory.Exists(sourceDir))
+        {
+            Console.Error.WriteLine($"Error: Source directory not found: '{sourceDir}'.");
+            return 1;
+        }
 
         var exports = await ExportScanner.ScanAsync(sourceDir);
 
@@ -37,6 +45,18 @@ public static class GenerateCommand
         Console.WriteLine($"✓ Generated {dtsPath}");
         
         return 0;
+    }
+
+    // A positional target may be a .csproj (scan its directory) or a directory.
+    private static string ResolveSourceDir(string? target)
+    {
+        if (target == null)
+            return Directory.GetCurrentDirectory();
+
+        if (File.Exists(target) && target.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+            return Path.GetDirectoryName(Path.GetFullPath(target))!;
+
+        return target;
     }
 
     private static string GenerateJavaScript(List<ExportedMethod> exports, string hash)

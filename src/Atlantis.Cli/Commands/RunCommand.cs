@@ -4,18 +4,18 @@ namespace Atlantis.Cli.Commands;
 
 public static class RunCommand
 {
-    public static async Task<int> RunAsync(string? project, string? configuration, bool verbose, string[] passthroughArgs)
+    public static async Task<int> RunAsync(string? project, string? path, string? configuration, bool verbose, string[] passthroughArgs)
     {
-        // Resolve the project from the current directory (atl operates on the
-        // project you are standing in). --project overrides.
-        var projectPath = project ?? ProjectLocator.FindInCurrentDirectory();
+        // Resolve the project from an explicit --project, a positional target
+        // (directory or .csproj), or the current directory.
+        var projectPath = ProjectLocator.Resolve(project ?? path, out var error);
         if (projectPath == null)
         {
-            Console.Error.WriteLine($"Error: {ProjectLocator.DescribeResolutionFailure()}");
+            Console.Error.WriteLine($"Error: {error}");
             return 1;
         }
 
-        await ExportScanner.WarnIfBindingsStaleAsync(Path.GetDirectoryName(Path.GetFullPath(projectPath))!);
+        await ExportScanner.WarnIfBindingsStaleAsync(Path.GetDirectoryName(projectPath)!);
 
         var args = new List<string>
         {
@@ -27,11 +27,6 @@ public static class RunCommand
         {
             args.Add("-c");
             args.Add(configuration);
-        }
-
-        if (!verbose)
-        {
-            args.Add("--nologo");
         }
 
         // Add any passthrough arguments after --
