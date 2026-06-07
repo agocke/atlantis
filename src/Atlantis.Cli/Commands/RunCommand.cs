@@ -6,13 +6,16 @@ public static class RunCommand
 {
     public static async Task<int> RunAsync(string? project, string? configuration, bool verbose, string[] passthroughArgs)
     {
-        // Auto-detect project if not specified
-        var projectPath = project ?? FindProject();
+        // Resolve the project from the current directory (atl operates on the
+        // project you are standing in). --project overrides.
+        var projectPath = project ?? ProjectLocator.FindInCurrentDirectory();
         if (projectPath == null)
         {
-            Console.Error.WriteLine("Error: No .csproj file found. Specify with --project or run from project directory.");
+            Console.Error.WriteLine($"Error: {ProjectLocator.DescribeResolutionFailure()}");
             return 1;
         }
+
+        await ExportScanner.WarnIfBindingsStaleAsync(Path.GetDirectoryName(Path.GetFullPath(projectPath))!);
 
         var args = new List<string>
         {
@@ -58,29 +61,5 @@ public static class RunCommand
         await process.WaitForExitAsync();
 
         return process.ExitCode;
-    }
-
-    private static string? FindProject()
-    {
-        var cwd = Directory.GetCurrentDirectory();
-        
-        // Check current directory
-        var projects = Directory.GetFiles(cwd, "*.csproj");
-        if (projects.Length == 1)
-            return projects[0];
-
-        // Check src subdirectory
-        var srcDir = Path.Combine(cwd, "src");
-        if (Directory.Exists(srcDir))
-        {
-            var srcProjects = Directory.GetFiles(srcDir, "*.csproj", SearchOption.AllDirectories)
-                .Where(p => !p.Contains(".Tests") && !p.Contains(".Cli") && !p.Contains(".Analyzers"))
-                .ToArray();
-            
-            if (srcProjects.Length == 1)
-                return srcProjects[0];
-        }
-
-        return null;
     }
 }
