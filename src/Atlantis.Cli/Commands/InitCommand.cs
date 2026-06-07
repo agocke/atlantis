@@ -98,6 +98,7 @@ public static class InitCommand
 
             // Replace placeholders
             content = content.Replace("{{ProjectName}}", projectName);
+            content = content.Replace("{{AtlantisVersion}}", ToolVersion.Current);
 
             await File.WriteAllTextAsync(outputPath, content);
         }

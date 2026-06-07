@@ -29,22 +29,6 @@
     <InternalsVisibleTo Include="Atlantis.Cli.Tests" />
   </ItemGroup>
 
-  <!-- Reference analyzers to bundle them with the CLI -->
-  <ItemGroup>
-    <ProjectReference Include="../Atlantis.Analyzers/Atlantis.Analyzers.csproj">
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <OutputItemType>AnalyzerAssets</OutputItemType>
-    </ProjectReference>
-  </ItemGroup>
-
-  <!-- Copy analyzer DLL to output -->
-  <Target Name="CopyAnalyzersToOutput" AfterTargets="Build">
-    <ItemGroup>
-      <AnalyzerDll Include="$(MSBuildProjectDirectory)/../../artifacts/bin/Atlantis.Analyzers/$(Configuration.ToLowerInvariant())/Atlantis.Analyzers.dll" />
-    </ItemGroup>
-    <Copy SourceFiles="@(AnalyzerDll)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
-  </Target>
-
   <!-- Embed templates (exclude from compilation) -->
   <ItemGroup>
     <Compile Remove="Templates\**\*" />

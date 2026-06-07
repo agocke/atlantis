@@ -15,6 +15,11 @@
     <PackageReference Include="Photino.NET" Version="4.0.16" />
   </ItemGroup>
 
+  <!-- Atlantis analyzers and code fixes (powers 'atl fix'). Dev/build-only. -->
+  <ItemGroup>
+    <PackageReference Include="Atlantis.Analyzers" Version="{{AtlantisVersion}}" PrivateAssets="all" />
+  </ItemGroup>
+
   <!-- Embed the web frontend (index.html + generated atlantis.js) from inside the
        project. Regenerate the bridge from this directory with: atl bindgen -->
   <ItemGroup>

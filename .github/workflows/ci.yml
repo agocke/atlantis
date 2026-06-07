@@ -35,7 +35,9 @@ jobs:
       - name: Set version suffix
         id: version
         shell: bash
-        run: echo "suffix=ci.${{ github.run_number }}" >> $GITHUB_OUTPUT
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "suffix=ci.${{ github.run_number }}.${SHORT_SHA}" >> $GITHUB_OUTPUT
 
       # Build and test Atlantis
       - name: Build Atlantis
