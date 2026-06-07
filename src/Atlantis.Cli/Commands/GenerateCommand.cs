@@ -86,15 +86,23 @@ public static class GenerateCommand
         sb.AppendLine("const atlantis = (() => {");
         sb.AppendLine("  let _callId = 0;");
         sb.AppendLine("  const _pending = new Map();");
+        sb.AppendLine("  const _subs = new Map(); // channel -> Set<callback>");
         sb.AppendLine();
-        sb.AppendLine("  // Listen for responses from native host");
-        sb.AppendLine("  window.addEventListener('message', (event) => {");
-        sb.AppendLine("    const { callId, result, error } = event.data;");
-        sb.AppendLine("    if (callId !== undefined && _pending.has(callId)) {");
-        sb.AppendLine("      const { resolve, reject } = _pending.get(callId);");
-        sb.AppendLine("      _pending.delete(callId);");
-        sb.AppendLine("      if (error) reject(new Error(error));");
-        sb.AppendLine("      else resolve(result);");
+        sb.AppendLine("  // Receive responses and events from the native host.");
+        sb.AppendLine("  // Photino exposes window.external.receiveMessage(callback).");
+        sb.AppendLine("  window.external.receiveMessage((json) => {");
+        sb.AppendLine("    let msg;");
+        sb.AppendLine("    try { msg = JSON.parse(json); } catch { return; }");
+        sb.AppendLine("    if (msg && msg.event === true) {");
+        sb.AppendLine("      const subs = _subs.get(msg.channel);");
+        sb.AppendLine("      if (subs) subs.forEach((cb) => cb(msg.payload));");
+        sb.AppendLine("      return;");
+        sb.AppendLine("    }");
+        sb.AppendLine("    if (msg && msg.callId !== undefined && _pending.has(msg.callId)) {");
+        sb.AppendLine("      const { resolve, reject } = _pending.get(msg.callId);");
+        sb.AppendLine("      _pending.delete(msg.callId);");
+        sb.AppendLine("      if (msg.error) reject(new Error(msg.error));");
+        sb.AppendLine("      else resolve(msg.result);");
         sb.AppendLine("    }");
         sb.AppendLine("  });");
         sb.AppendLine();
@@ -102,8 +110,21 @@ public static class GenerateCommand
         sb.AppendLine("    return new Promise((resolve, reject) => {");
         sb.AppendLine("      const callId = ++_callId;");
         sb.AppendLine("      _pending.set(callId, { resolve, reject });");
-        sb.AppendLine("      window.external?.postMessage(JSON.stringify({ callId, className, methodName, args }));");
+        sb.AppendLine("      window.external.sendMessage(JSON.stringify({ callId, className, methodName, args }));");
         sb.AppendLine("    });");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  // Subscribe to a host event channel. Returns an unsubscribe function.");
+        sb.AppendLine("  function on(channel, callback) {");
+        sb.AppendLine("    let subs = _subs.get(channel);");
+        sb.AppendLine("    if (!subs) { subs = new Set(); _subs.set(channel, subs); }");
+        sb.AppendLine("    subs.add(callback);");
+        sb.AppendLine("    return () => off(channel, callback);");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  function off(channel, callback) {");
+        sb.AppendLine("    const subs = _subs.get(channel);");
+        sb.AppendLine("    if (subs) subs.delete(callback);");
         sb.AppendLine("  }");
         sb.AppendLine();
 
@@ -126,6 +147,8 @@ public static class GenerateCommand
         {
             sb.AppendLine($"    {className},");
         }
+        sb.AppendLine("    on,");
+        sb.AppendLine("    off,");
         sb.AppendLine("  };");
         sb.AppendLine("})();");
 
@@ -152,6 +175,12 @@ public static class GenerateCommand
             sb.AppendLine("  }");
             sb.AppendLine();
         }
+
+        sb.AppendLine("  /** Subscribe to a host event channel. Returns an unsubscribe function. */");
+        sb.AppendLine("  function on(channel: string, callback: (payload: any) => void): () => void;");
+        sb.AppendLine("  /** Unsubscribe a previously registered event callback. */");
+        sb.AppendLine("  function off(channel: string, callback: (payload: any) => void): void;");
+        sb.AppendLine();
 
         sb.AppendLine("}");
 
