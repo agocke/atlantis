@@ -72,7 +72,7 @@ open -a Simulator
 ```
 atlantis/
 ├── src/
-│   ├── Atlantis/             # The Atlantis framework (NuGet package "Atlantis")
+│   ├── Atlantis/             # The Atlantis framework (NuGet package "Atlantis.Framework")
 │   │   ├── Bridge/           #   AOT-safe JS bridge core
 │   │   ├── Host/             #   AtlantisApp webview hosts (macOS/Windows/Linux legs)
 │   │   ├── Platforms/iOS/    #   iOS host (P/Invoke into Swift)
@@ -91,7 +91,7 @@ atlantis/
 
 ## Architecture
 
-Apps reference a single `Atlantis` package and call `AtlantisApp.Run(...)`, which owns
+Apps reference a single `Atlantis.Framework` package and call `AtlantisApp.Run(...)`, which owns
 the native webview so app code never touches a platform webview type. The concrete host
 is selected at build time per `RuntimeIdentifier`:
 

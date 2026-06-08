@@ -19,8 +19,11 @@
     -->
     <AtlantisPlatform Condition="'$(AtlantisPlatform)' == ''">Desktop</AtlantisPlatform>
 
-    <!-- NuGet package metadata -->
-    <PackageId>Atlantis</PackageId>
+    <!-- NuGet package metadata. The bare "Atlantis" id is taken on nuget.org by an
+         unrelated project, so the framework publishes as "Atlantis.Framework". The
+         assembly and namespace stay "Atlantis" (consumers still write `using Atlantis;`
+         and call AtlantisApp.Run). -->
+    <PackageId>Atlantis.Framework</PackageId>
     <VersionPrefix>0.1.0</VersionPrefix>
     <Description>Atlantis application framework: a Native AOT cross-platform webview host (WKWebView on macOS/iOS, WebView2 on Windows, WebKitGTK on Linux) and AOT-safe JavaScript bridge.</Description>
     <PackageTags>atlantis;webview;aot;bridge</PackageTags>
