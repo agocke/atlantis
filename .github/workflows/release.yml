@@ -49,6 +49,44 @@ jobs:
       - name: Push to nuget.org
         run: dotnet nuget push 'artifacts/package/release/Atlantis.Analyzers.*.nupkg' --source https://api.nuget.org/v3/index.json --skip-duplicate
 
+  release-atlantis:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build Atlantis
+        run: dotnet build src/Atlantis/Atlantis.csproj -c Release -p:VersionPrefix=${{ steps.version.outputs.version }}
+
+      - name: Pack Atlantis (stable)
+        run: dotnet pack src/Atlantis/Atlantis.csproj -c Release --no-build -p:VersionPrefix=${{ steps.version.outputs.version }}
+
+      - name: Upload NuGet package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-atlantis-${{ steps.version.outputs.version }}
+          path: artifacts/package/release/Atlantis.[0-9]*.nupkg
+
+      - name: Push to GitHub Packages
+        run: dotnet nuget push 'artifacts/package/release/Atlantis.[0-9]*.nupkg' --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
+
+      - name: Login to nuget.org (OIDC)
+        uses: NuGet/login@v1
+        with:
+          username: ${{ secrets.NUGET_USER }}
+
+      - name: Push to nuget.org
+        run: dotnet nuget push 'artifacts/package/release/Atlantis.[0-9]*.nupkg' --source https://api.nuget.org/v3/index.json --skip-duplicate
+
   release-cli:
     strategy:
       matrix:

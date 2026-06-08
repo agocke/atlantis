@@ -5,7 +5,7 @@ namespace Atlantis.Cli.Commands;
 /// <summary>
 /// Compiles the generated TypeScript bridge (frontend/atlantis.ts) into the
 /// browser-loadable runtime (atlantis.js) and ambient editor types (atlantis.d.ts)
-/// using tsc. The Photino webview can only execute JavaScript, so the .ts is a
+/// using tsc. The webview can only execute JavaScript, so the .ts is a
 /// source-of-truth that must be transpiled before it is embedded and served.
 /// </summary>
 internal static class FrontendCompiler

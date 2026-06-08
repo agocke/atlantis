@@ -1,52 +1,87 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <PublishAot>true</PublishAot>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <IsAotCompatible>true</IsAotCompatible>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!--
+      Platform leg selected at build time. The same sources compile into two
+      assemblies with the same identity but different webview hosts:
+        Desktop  - default; the macOS (AppKit + WKWebView, via the Objective-C runtime),
+                   Windows (Win32 + WebView2) and Linux (GTK 3 + WebKitGTK) hosts.
+        iOS      - the WKWebView/Swift host.
+      The webview hosts are implemented in managed code over OS interop. The only native
+      payload is WebView2Loader.dll, vendored under runtimes/win-*/native (the Edge
+      WebView2 runtime itself ships with Windows); macOS and Linux carry no native binary.
+    -->
+    <AtlantisPlatform Condition="'$(AtlantisPlatform)' == ''">Desktop</AtlantisPlatform>
+
+    <!-- NuGet package metadata -->
+    <PackageId>Atlantis</PackageId>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <Description>Atlantis application framework: a Native AOT cross-platform webview host (WKWebView on macOS/iOS, WebView2 on Windows, WebKitGTK on Linux) and AOT-safe JavaScript bridge.</Description>
+    <PackageTags>atlantis;webview;aot;bridge</PackageTags>
+
+    <!-- Optionally build and pack the iOS leg into runtimes/ios*/lib (requires the iOS
+         NativeAOT toolchain; opt in with -p:IncludeiOSLeg=true on a configured machine). -->
+    <IncludeiOSLeg Condition="'$(IncludeiOSLeg)' == ''">false</IncludeiOSLeg>
+    <AtlantisLegsDir>$(MSBuildProjectDirectory)/obj/legs</AtlantisLegsDir>
   </PropertyGroup>
 
-  <!-- iOS-specific settings -->
-  <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('ios')) Or $(RuntimeIdentifier.StartsWith('iossimulator'))">
-    <DefineConstants>$(DefineConstants);IOS</DefineConstants>
+  <PropertyGroup Condition="'$(AtlantisPlatform)' == 'Desktop'">
+    <DefineConstants>$(DefineConstants);ATLANTIS_DESKTOP</DefineConstants>
+    <!-- Vendor WebView2Loader.dll into runtimes/win-*/native at pack time. -->
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);_AddWebView2Loader</TargetsForTfmSpecificContentInPackage>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(AtlantisPlatform)' == 'iOS'">
+    <DefineConstants>$(DefineConstants);ATLANTIS_IOS</DefineConstants>
   </PropertyGroup>
 
-  <!-- Desktop: use Photino -->
-  <ItemGroup Condition="!$(RuntimeIdentifier.StartsWith('ios')) And !$(RuntimeIdentifier.StartsWith('iossimulator'))">
-    <PackageReference Include="Photino.NET" Version="4.0.16" />
+  <!-- The Windows host loads WebView2 through WebView2Loader.dll. The SDK package is
+       referenced only to harvest that native binary (ExcludeAssets="all" keeps it out of
+       the managed graph, so the package stays dependency-free); GeneratePathProperty
+       exposes $(PkgMicrosoft_Web_WebView2) for the pack target below. -->
+  <ItemGroup Condition="'$(AtlantisPlatform)' == 'Desktop'">
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2592.51"
+                      GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="all" />
   </ItemGroup>
 
-  <!-- iOS: link frameworks and Swift runtime -->
-  <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('ios')) Or $(RuntimeIdentifier.StartsWith('iossimulator'))">
-    <!-- Enable DirectPInvoke for __Internal to resolve symbols at link time, not dlopen -->
-    <DirectPInvokes>__Internal</DirectPInvokes>
+  <Target Name="_AddWebView2Loader" Condition="'$(AtlantisPlatform)' == 'Desktop'">
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="$(PkgMicrosoft_Web_WebView2)/runtimes/win-x64/native/WebView2Loader.dll">
+        <PackagePath>runtimes/win-x64/native/WebView2Loader.dll</PackagePath>
+      </TfmSpecificPackageFile>
+      <TfmSpecificPackageFile Include="$(PkgMicrosoft_Web_WebView2)/runtimes/win-arm64/native/WebView2Loader.dll">
+        <PackagePath>runtimes/win-arm64/native/WebView2Loader.dll</PackagePath>
+      </TfmSpecificPackageFile>
+    </ItemGroup>
+  </Target>
+
+  <!-- The default (Desktop) build is the package's lib/ assembly. Its platform hosts only
+       bind native libraries lazily (libobjc on macOS, gtk/webkit on Linux, user32/WebView2
+       on Windows), so this single assembly links cleanly on any desktop OS; the unused
+       imports for other platforms are never resolved at runtime. -->
+
+  <!-- iOS leg => runtimes/ios*/lib/<tfm>/Atlantis.dll, only when opted in. -->
+  <PropertyGroup Condition="'$(IncludeiOSLeg)' == 'true'">
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);_AddAtlantisIosLeg</TargetsForTfmSpecificContentInPackage>
   </PropertyGroup>
-  
-  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('ios')) Or $(RuntimeIdentifier.StartsWith('iossimulator'))">
-    <NativeFramework Include="UIKit" />
-    <NativeFramework Include="WebKit" />
-    <NativeFramework Include="SwiftUI" />
-    <!-- DirectPInvoke for __Internal - resolves Swift symbols at link time -->
-    <DirectPInvoke Include="__Internal" />
-    <!-- Ensure Swift runtime libraries resolve at runtime -->
-    <LinkerArg Include="-rpath" />
-    <LinkerArg Include="/usr/lib/swift" />
-    <!-- Keep Swift entry point symbol -->
-    <LinkerArg Include="-u" />
-    <LinkerArg Include="_atlantis_run" />
-  </ItemGroup>
-  
-  <!-- Pass extra linker args (e.g., Swift object file) -->
-  <ItemGroup Condition="'$(ExtraLinkerArgs)' != ''">
-    <LinkerArg Include="$(ExtraLinkerArgs)" />
-  </ItemGroup>
 
-  <ItemGroup>
-    <EmbeddedResource Include="../frontend/**/*" LinkBase="frontend" />
-  </ItemGroup>
+  <!-- Built as an isolated child build because it compiles the iOS host instead of
+       the desktop one. -->
+  <Target Name="_AddAtlantisIosLeg" Condition="'$(IncludeiOSLeg)' == 'true'">
+    <Exec Command="dotnet build &quot;$(MSBuildProjectFullPath)&quot; -c $(Configuration) -p:AtlantisPlatform=iOS -p:UseArtifactsOutput=false -p:BaseIntermediateOutputPath=$(AtlantisLegsDir)/ios/obj/ --output &quot;$(AtlantisLegsDir)/ios/&quot;" />
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="$(AtlantisLegsDir)/ios/Atlantis.dll">
+        <PackagePath>runtimes/ios/lib/$(TargetFramework)/Atlantis.dll</PackagePath>
+      </TfmSpecificPackageFile>
+      <TfmSpecificPackageFile Include="$(AtlantisLegsDir)/ios/Atlantis.dll">
+        <PackagePath>runtimes/iossimulator/lib/$(TargetFramework)/Atlantis.dll</PackagePath>
+      </TfmSpecificPackageFile>
+    </ItemGroup>
+  </Target>
 
 </Project>

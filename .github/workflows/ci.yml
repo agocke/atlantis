@@ -39,15 +39,19 @@ jobs:
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           echo "suffix=ci.${{ github.run_number }}.${SHORT_SHA}" >> $GITHUB_OUTPUT
 
-      # Build and test Atlantis
-      - name: Build Atlantis
+      # Build and test the Atlantis framework + sample
+      - name: Build Atlantis framework
         run: dotnet build src/Atlantis/Atlantis.csproj -c Release
 
       - name: Test
-        run: dotnet test tests/Atlantis.Tests/Atlantis.Tests.csproj -c Release --verbosity normal
+        run: dotnet test tests/HelloWorld.Tests/HelloWorld.Tests.csproj -c Release --verbosity normal
 
-      - name: Publish Atlantis (Native AOT)
-        run: dotnet publish src/Atlantis/Atlantis.csproj -c Release
+      - name: Publish HelloWorld sample (Native AOT)
+        run: dotnet publish samples/HelloWorld/HelloWorld.csproj -c Release -r ${{ matrix.rid }}
+
+      - name: Pack Atlantis package
+        if: matrix.rid == 'linux-x64'
+        run: dotnet pack src/Atlantis/Atlantis.csproj -c Release --version-suffix ${{ steps.version.outputs.suffix }}
 
       # Build CLI
       - name: Build CLI
@@ -87,6 +91,13 @@ jobs:
           name: nuget-analyzers
           path: artifacts/package/release/Atlantis.Analyzers.*.nupkg
 
+      - name: Upload Atlantis package
+        if: matrix.rid == 'linux-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-atlantis
+          path: artifacts/package/release/Atlantis.[0-9]*.nupkg
+
       # Publish to GitHub Packages
       - name: Push to GitHub Packages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -113,6 +124,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: nuget-analyzers
+          path: packages
+
+      - name: Download Atlantis package
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-atlantis
           path: packages
 
       - name: Setup .NET
