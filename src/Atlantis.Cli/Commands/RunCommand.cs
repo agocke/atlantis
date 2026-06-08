@@ -16,6 +16,7 @@ public static class RunCommand
         }
 
         await ExportScanner.WarnIfBindingsStaleAsync(Path.GetDirectoryName(projectPath)!);
+        await FrontendCompiler.EnsureCompiledAsync(Path.Combine(Path.GetDirectoryName(projectPath)!, "frontend"));
 
         var args = new List<string>
         {

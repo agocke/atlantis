@@ -16,6 +16,7 @@ public static class BuildCommand
         }
 
         await ExportScanner.WarnIfBindingsStaleAsync(Path.GetDirectoryName(projectPath)!);
+        await FrontendCompiler.EnsureCompiledAsync(Path.Combine(Path.GetDirectoryName(projectPath)!, "frontend"));
 
         Console.WriteLine($"Building {Path.GetFileName(projectPath)}...");
 
