@@ -4,15 +4,18 @@ namespace Atlantis.Cli.Commands;
 
 public static class BuildCommand
 {
-    public static async Task<int> RunAsync(string? project, string? rid, string configuration, bool verbose)
+    public static async Task<int> RunAsync(string? project, string? path, string? rid, string configuration, bool verbose)
     {
-        // Auto-detect project if not specified
-        var projectPath = project ?? FindProject();
+        // Resolve the project from an explicit --project, a positional target
+        // (directory or .csproj), or the current directory.
+        var projectPath = ProjectLocator.Resolve(project ?? path, out var error);
         if (projectPath == null)
         {
-            Console.Error.WriteLine("Error: No .csproj file found. Specify with --project or run from project directory.");
+            Console.Error.WriteLine($"Error: {error}");
             return 1;
         }
+
+        await ExportScanner.WarnIfBindingsStaleAsync(Path.GetDirectoryName(projectPath)!);
 
         Console.WriteLine($"Building {Path.GetFileName(projectPath)}...");
 
@@ -73,30 +76,6 @@ public static class BuildCommand
         }
         
         return 0;
-    }
-
-    private static string? FindProject()
-    {
-        var cwd = Directory.GetCurrentDirectory();
-        
-        // Check current directory
-        var projects = Directory.GetFiles(cwd, "*.csproj");
-        if (projects.Length == 1)
-            return projects[0];
-
-        // Check src subdirectory
-        var srcDir = Path.Combine(cwd, "src");
-        if (Directory.Exists(srcDir))
-        {
-            var srcProjects = Directory.GetFiles(srcDir, "*.csproj", SearchOption.AllDirectories)
-                .Where(p => !p.Contains(".Tests") && !p.Contains(".Cli"))
-                .ToArray();
-            
-            if (srcProjects.Length == 1)
-                return srcProjects[0];
-        }
-
-        return null;
     }
 
     private static string? FindPublishOutput(string projectDir, string config, string? rid)

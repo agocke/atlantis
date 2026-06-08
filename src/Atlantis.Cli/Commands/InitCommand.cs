@@ -38,16 +38,18 @@ public static class InitCommand
 
         Console.WriteLine($"Creating Atlantis project '{projectName}'...");
 
-        // Create directory structure
+        // Create directory structure. The web frontend lives inside the app project
+        // (embedded as resources), so 'atl' commands can treat <project>/frontend as a
+        // reliable convention and you can cd into the project to run them.
         Directory.CreateDirectory(projectDir);
         Directory.CreateDirectory(Path.Combine(projectDir, "src", projectName));
-        Directory.CreateDirectory(Path.Combine(projectDir, "src", "frontend"));
+        Directory.CreateDirectory(Path.Combine(projectDir, "src", projectName, "frontend"));
 
         // Write template files
         await WriteTemplate("Project.csproj.template", Path.Combine(projectDir, "src", projectName, $"{projectName}.csproj"), projectName);
         await WriteTemplate("Program_cs.template", Path.Combine(projectDir, "src", projectName, "Program.cs"), projectName);
         await WriteTemplate("Api_cs.template", Path.Combine(projectDir, "src", projectName, "Api.cs"), projectName);
-        await WriteTemplate("index.html.template", Path.Combine(projectDir, "src", "frontend", "index.html"), projectName);
+        await WriteTemplate("index.html.template", Path.Combine(projectDir, "src", projectName, "frontend", "index.html"), projectName);
         await WriteTemplate("Solution.sln.template", Path.Combine(projectDir, $"{projectName}.sln"), projectName);
         await WriteTemplate("Directory.Build.props.template", Path.Combine(projectDir, "Directory.Build.props"), projectName);
         await WriteTemplate("gitignore.template", Path.Combine(projectDir, ".gitignore"), projectName);
@@ -60,8 +62,9 @@ public static class InitCommand
         {
             Console.WriteLine($"  cd {projectName}");
         }
-        Console.WriteLine($"  dotnet build src/{projectName}");
-        Console.WriteLine($"  dotnet run --project src/{projectName}");
+        Console.WriteLine($"  cd src/{projectName}");
+        Console.WriteLine($"  atl bindgen   # generate the JS/TS bridge into frontend/");
+        Console.WriteLine($"  atl run       # build and launch the app");
         
         return 0;
     }
@@ -95,6 +98,7 @@ public static class InitCommand
 
             // Replace placeholders
             content = content.Replace("{{ProjectName}}", projectName);
+            content = content.Replace("{{AtlantisVersion}}", ToolVersion.Current);
 
             await File.WriteAllTextAsync(outputPath, content);
         }

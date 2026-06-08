@@ -39,7 +39,7 @@
 </head>
 <body>
     <h1>Welcome to {{ProjectName}}</h1>
-    <p>Your Atlantis app is running! Edit this file at <code>src/frontend/index.html</code>.</p>
+    <p>Your Atlantis app is running! Edit this file at <code>frontend/index.html</code>.</p>
     
     <div class="demo">
         <h3>Try the API</h3>

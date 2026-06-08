@@ -5,12 +5,19 @@ using Atlantis.Cli.Commands;
 
 var console = AnsiConsole.Console;
 
-if (!CmdLine.TryParse<AtlCommand>(args, console, out var cmd))
+// Split off application passthrough arguments after a "--" separator (as with
+// `dotnet run <project> -- <app args>`). Everything before "--" is parsed as atl
+// arguments; everything after is forwarded to the launched application by `run`.
+var separator = Array.IndexOf(args, "--");
+var atlArgs = separator >= 0 ? args[..separator] : args;
+var forwardArgs = separator >= 0 ? args[(separator + 1)..] : [];
+
+if (!CmdLine.TryParse<AtlCommand>(atlArgs, console, out var cmd))
 {
     return 1;
 }
 
-return await cmd.RunAsync();
+return await cmd.RunAsync(forwardArgs);
 
 [GenerateDeserialize]
 [Command("atl", Summary = "Atlantis CLI - Tools for Atlantis development")]
@@ -19,12 +26,12 @@ public partial record AtlCommand
     [CommandGroup("command")]
     public AtlSubCommand? SubCommand { get; init; }
 
-    public Task<int> RunAsync()
+    public Task<int> RunAsync(string[] forwardArgs)
     {
         if (SubCommand is AtlSubCommand.Init init) return init.RunAsync();
         if (SubCommand is AtlSubCommand.Bindgen bindgen) return bindgen.RunAsync();
         if (SubCommand is AtlSubCommand.Build build) return build.RunAsync();
-        if (SubCommand is AtlSubCommand.Run run) return run.RunAsync();
+        if (SubCommand is AtlSubCommand.Run run) return run.RunAsync(forwardArgs);
         if (SubCommand is AtlSubCommand.Fix fix) return fix.RunAsync();
         if (SubCommand is AtlSubCommand.Update update) return update.RunAsync();
         
@@ -53,18 +60,24 @@ public abstract partial record AtlSubCommand
     [Command("bindgen", Summary = "Generate JavaScript/TypeScript bindings from [JSExport] methods")]
     public sealed partial record Bindgen : AtlSubCommand
     {
+        [CommandParameter(0, "path", Description = "App project directory or .csproj to scan (defaults to the current directory)")]
+        public string? Path { get; init; }
+
         [CommandOption("-s|--source", Description = "Source directory containing C# files")]
         public string? Source { get; init; }
 
         [CommandOption("-o|--output", Description = "Output directory for generated files")]
         public string? Output { get; init; }
 
-        public Task<int> RunAsync() => GenerateCommand.RunAsync(Source, Output);
+        public Task<int> RunAsync() => GenerateCommand.RunAsync(Source, Output, Path);
     }
 
     [Command("build", Summary = "Build the Atlantis project for deployment")]
     public sealed partial record Build : AtlSubCommand
     {
+        [CommandParameter(0, "path", Description = "App project directory or .csproj (defaults to the current directory)")]
+        public string? Path { get; init; }
+
         [CommandOption("-p|--project", Description = "Path to the .csproj file (auto-detected if not specified)")]
         public string? Project { get; init; }
 
@@ -77,7 +90,7 @@ public abstract partial record AtlSubCommand
         [CommandOption("-v|--verbose", Description = "Show verbose output")]
         public bool? Verbose { get; init; }
 
-        public Task<int> RunAsync() => BuildCommand.RunAsync(Project, Rid, Configuration ?? "Release", Verbose ?? false);
+        public Task<int> RunAsync() => BuildCommand.RunAsync(Project, Path, Rid, Configuration ?? "Release", Verbose ?? false);
     }
 
     [Command("update", Summary = "Update atl to the latest version")]
@@ -95,6 +108,9 @@ public abstract partial record AtlSubCommand
     [Command("run", Summary = "Run the Atlantis application")]
     public sealed partial record Run : AtlSubCommand
     {
+        [CommandParameter(0, "path", Description = "App project directory or .csproj (defaults to the current directory)")]
+        public string? Path { get; init; }
+
         [CommandOption("-p|--project", Description = "Path to the .csproj file (auto-detected if not specified)")]
         public string? Project { get; init; }
 
@@ -104,10 +120,9 @@ public abstract partial record AtlSubCommand
         [CommandOption("-v|--verbose", Description = "Show verbose output")]
         public bool? Verbose { get; init; }
 
-        [CommandParameter(0, "args", Description = "Arguments to pass to the application")]
-        public string[]? Args { get; init; }
-
-        public Task<int> RunAsync() => RunCommand.RunAsync(Project, Configuration, Verbose ?? false, Args ?? []);
+        // Application passthrough arguments (after "--") are supplied by Program.cs.
+        public Task<int> RunAsync(string[] forwardArgs) =>
+            RunCommand.RunAsync(Project, Path, Configuration, Verbose ?? false, forwardArgs);
     }
 
     [Command("fix", Summary = "Apply code fixes for Atlantis migration issues")]

@@ -15,9 +15,15 @@
     <PackageReference Include="Photino.NET" Version="4.0.16" />
   </ItemGroup>
 
-  <!-- Embed frontend assets -->
+  <!-- Atlantis analyzers and code fixes (powers 'atl fix'). Dev/build-only. -->
   <ItemGroup>
-    <EmbeddedResource Include="../frontend/**/*" LinkBase="frontend" />
+    <PackageReference Include="Atlantis.Analyzers" Version="{{AtlantisVersion}}" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Embed the web frontend (index.html + generated atlantis.js) from inside the
+       project. Regenerate the bridge from this directory with: atl bindgen -->
+  <ItemGroup>
+    <EmbeddedResource Include="frontend/**/*" LinkBase="frontend" />
   </ItemGroup>
 
 </Project>
