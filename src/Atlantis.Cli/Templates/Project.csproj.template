@@ -19,7 +19,7 @@
        webview is implemented inside this single package (no native dependencies), so
        apps reference only this one package. -->
   <ItemGroup>
-    <PackageReference Include="Atlantis" Version="{{AtlantisVersion}}" />
+    <PackageReference Include="Atlantis.Framework" Version="{{AtlantisVersion}}" />
   </ItemGroup>
 
   <!-- Atlantis analyzers and code fixes (powers 'atl fix'). Dev/build-only. -->

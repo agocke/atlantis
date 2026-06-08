@@ -96,7 +96,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nuget-atlantis
-          path: artifacts/package/release/Atlantis.[0-9]*.nupkg
+          path: artifacts/package/release/Atlantis.Framework.[0-9]*.nupkg
 
       # Publish to GitHub Packages
       - name: Push to GitHub Packages
