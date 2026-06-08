@@ -1,3 +1,6 @@
+using System.Reflection;
+using System.Text;
+
 namespace Atlantis.Cli.Commands;
 
 public static class GenerateCommand
@@ -35,15 +38,19 @@ public static class GenerateCommand
         // when bindings are stale without relying on file timestamps.
         var hash = ExportScanner.ComputeInputHash(exports);
 
-        var jsPath = Path.Combine(outputDir, "atlantis.js");
-        var dtsPath = Path.Combine(outputDir, "atlantis.d.ts");
+        // atlantis.ts is the source of truth; tsc transpiles it into the
+        // browser-loadable atlantis.js plus ambient atlantis.d.ts editor types.
+        var tsPath = Path.Combine(outputDir, FrontendCompiler.SourceFileName);
+        await File.WriteAllTextAsync(tsPath, GenerateTypeScript(exports, hash));
+        Console.WriteLine($"✓ Generated {tsPath}");
 
-        await File.WriteAllTextAsync(jsPath, GenerateJavaScript(exports, hash));
-        await File.WriteAllTextAsync(dtsPath, GenerateTypeScript(exports, hash));
+        Console.WriteLine("Compiling TypeScript bridge with tsc...");
+        if (!await FrontendCompiler.CompileAsync(outputDir))
+            return 1;
 
-        Console.WriteLine($"✓ Generated {jsPath}");
-        Console.WriteLine($"✓ Generated {dtsPath}");
-        
+        Console.WriteLine($"✓ Compiled {Path.Combine(outputDir, "atlantis.js")}");
+        Console.WriteLine($"✓ Compiled {Path.Combine(outputDir, "atlantis.d.ts")}");
+
         return 0;
     }
 
@@ -59,113 +66,62 @@ public static class GenerateCommand
         return target;
     }
 
-    private static string GenerateJavaScript(List<ExportedMethod> exports, string hash)
-    {
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine(ExportScanner.HeaderLine(hash));
-        sb.AppendLine();
-        sb.AppendLine("const atlantis = (() => {");
-        sb.AppendLine("  let _callId = 0;");
-        sb.AppendLine("  const _pending = new Map();");
-        sb.AppendLine("  const _subs = new Map(); // channel -> Set<callback>");
-        sb.AppendLine();
-        sb.AppendLine("  // Receive responses and events from the native host.");
-        sb.AppendLine("  // Photino exposes window.external.receiveMessage(callback).");
-        sb.AppendLine("  window.external.receiveMessage((json) => {");
-        sb.AppendLine("    let msg;");
-        sb.AppendLine("    try { msg = JSON.parse(json); } catch { return; }");
-        sb.AppendLine("    if (msg && msg.event === true) {");
-        sb.AppendLine("      const subs = _subs.get(msg.channel);");
-        sb.AppendLine("      if (subs) subs.forEach((cb) => cb(msg.payload));");
-        sb.AppendLine("      return;");
-        sb.AppendLine("    }");
-        sb.AppendLine("    if (msg && msg.callId !== undefined && _pending.has(msg.callId)) {");
-        sb.AppendLine("      const { resolve, reject } = _pending.get(msg.callId);");
-        sb.AppendLine("      _pending.delete(msg.callId);");
-        sb.AppendLine("      if (msg.error) reject(new Error(msg.error));");
-        sb.AppendLine("      else resolve(msg.result);");
-        sb.AppendLine("    }");
-        sb.AppendLine("  });");
-        sb.AppendLine();
-        sb.AppendLine("  function _invoke(className, methodName, args) {");
-        sb.AppendLine("    return new Promise((resolve, reject) => {");
-        sb.AppendLine("      const callId = ++_callId;");
-        sb.AppendLine("      _pending.set(callId, { resolve, reject });");
-        sb.AppendLine("      window.external.sendMessage(JSON.stringify({ callId, className, methodName, args }));");
-        sb.AppendLine("    });");
-        sb.AppendLine("  }");
-        sb.AppendLine();
-        sb.AppendLine("  // Subscribe to a host event channel. Returns an unsubscribe function.");
-        sb.AppendLine("  function on(channel, callback) {");
-        sb.AppendLine("    let subs = _subs.get(channel);");
-        sb.AppendLine("    if (!subs) { subs = new Set(); _subs.set(channel, subs); }");
-        sb.AppendLine("    subs.add(callback);");
-        sb.AppendLine("    return () => off(channel, callback);");
-        sb.AppendLine("  }");
-        sb.AppendLine();
-        sb.AppendLine("  function off(channel, callback) {");
-        sb.AppendLine("    const subs = _subs.get(channel);");
-        sb.AppendLine("    if (subs) subs.delete(callback);");
-        sb.AppendLine("  }");
-        sb.AppendLine();
-
-        // Group by class
-        var byClass = exports.GroupBy(e => e.ClassName);
-        foreach (var group in byClass)
-        {
-            sb.AppendLine($"  const {group.Key} = {{");
-            foreach (var method in group)
-            {
-                var paramNames = string.Join(", ", method.Parameters.Select(p => p.Name));
-                sb.AppendLine($"    {method.MethodName}: ({paramNames}) => _invoke('{group.Key}', '{method.MethodName}', [{paramNames}]),");
-            }
-            sb.AppendLine("  };");
-            sb.AppendLine();
-        }
-
-        sb.AppendLine("  return {");
-        foreach (var className in byClass.Select(g => g.Key))
-        {
-            sb.AppendLine($"    {className},");
-        }
-        sb.AppendLine("    on,");
-        sb.AppendLine("    off,");
-        sb.AppendLine("  };");
-        sb.AppendLine("})();");
-
-        return sb.ToString();
-    }
-
+    // The runtime scaffolding lives in Templates/atlantis.ts.template; only the
+    // per-class bindings and the exported member list are generated here. The
+    // typed bindings flow through tsc into atlantis.js and atlantis.d.ts.
     private static string GenerateTypeScript(List<ExportedMethod> exports, string hash)
     {
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine(ExportScanner.HeaderLine(hash));
-        sb.AppendLine();
-        sb.AppendLine("declare namespace atlantis {");
+        var byClass = exports.GroupBy(e => e.ClassName).ToList();
 
-        var byClass = exports.GroupBy(e => e.ClassName);
+        var bindings = new StringBuilder();
         foreach (var group in byClass)
         {
-            sb.AppendLine($"  namespace {group.Key} {{");
+            bindings.AppendLine($"  const {group.Key} = {{");
             foreach (var method in group)
             {
-                var tsParams = string.Join(", ", method.Parameters.Select(p => $"{p.Name}: {MapToTypeScript(p.Type)}"));
+                var paramList = string.Join(", ", method.Parameters.Select(p => $"{p.Name}: {MapToTypeScript(p.Type)}"));
+                var paramNames = string.Join(", ", method.Parameters.Select(p => p.Name));
                 var tsReturn = MapToTypeScript(method.ReturnType);
-                sb.AppendLine($"    function {method.MethodName}({tsParams}): Promise<{tsReturn}>;");
+                bindings.AppendLine($"    {method.MethodName}: ({paramList}): Promise<{tsReturn}> => _invoke('{group.Key}', '{method.MethodName}', [{paramNames}]),");
             }
-            sb.AppendLine("  }");
-            sb.AppendLine();
+            bindings.AppendLine("  };");
+            bindings.AppendLine();
         }
 
-        sb.AppendLine("  /** Subscribe to a host event channel. Returns an unsubscribe function. */");
-        sb.AppendLine("  function on(channel: string, callback: (payload: any) => void): () => void;");
-        sb.AppendLine("  /** Unsubscribe a previously registered event callback. */");
-        sb.AppendLine("  function off(channel: string, callback: (payload: any) => void): void;");
-        sb.AppendLine();
+        var exportList = new StringBuilder();
+        foreach (var className in byClass.Select(g => g.Key))
+        {
+            exportList.AppendLine($"    {className},");
+        }
 
-        sb.AppendLine("}");
+        return LoadTemplate("atlantis_ts.template")
+            .Replace("{{Header}}", ExportScanner.HeaderLine(hash))
+            .Replace("{{Bindings}}", bindings.ToString())
+            .Replace("{{Exports}}", exportList.ToString())
+            .ReplaceLineEndings("\n");
+    }
 
-        return sb.ToString();
+    private static string LoadTemplate(string templateName)
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        var resourceName = $"Atlantis.Cli.Templates.{templateName}";
+
+        var stream = assembly.GetManifestResourceStream(resourceName);
+        if (stream == null)
+        {
+            var matching = assembly.GetManifestResourceNames().FirstOrDefault(r => r.EndsWith(templateName));
+            if (matching != null)
+                stream = assembly.GetManifestResourceStream(matching);
+        }
+
+        if (stream == null)
+            throw new InvalidOperationException($"Template not found: {templateName}. Available: {string.Join(", ", assembly.GetManifestResourceNames())}");
+
+        using (stream)
+        using (var reader = new StreamReader(stream))
+        {
+            return reader.ReadToEnd();
+        }
     }
 
     private static string MapToTypeScript(string csharpType)

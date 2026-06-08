@@ -20,10 +20,12 @@
     <PackageReference Include="Atlantis.Analyzers" Version="{{AtlantisVersion}}" PrivateAssets="all" />
   </ItemGroup>
 
-  <!-- Embed the web frontend (index.html + generated atlantis.js) from inside the
-       project. Regenerate the bridge from this directory with: atl bindgen -->
+  <!-- Embed the web frontend (index.html + compiled atlantis.js) from inside the
+       project. The atlantis.ts source and atlantis.d.ts types are excluded; tsc
+       compiles atlantis.ts into atlantis.js. Regenerate the bridge from this
+       directory with: atl bindgen -->
   <ItemGroup>
-    <EmbeddedResource Include="frontend/**/*" LinkBase="frontend" />
+    <EmbeddedResource Include="frontend/**/*" Exclude="frontend/**/*.ts" LinkBase="frontend" />
   </ItemGroup>
 
 </Project>

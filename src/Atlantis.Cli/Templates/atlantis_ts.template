@@ -1,0 +1,56 @@
+{{Header}}
+
+const atlantis = (() => {
+  const _host = (window as any).external as {
+    sendMessage(message: string): void;
+    receiveMessage(callback: (message: string) => void): void;
+  };
+
+  let _callId = 0;
+  const _pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+  const _subs = new Map<string, Set<(payload: any) => void>>(); // channel -> Set<callback>
+
+  // Receive responses and events from the native host.
+  // Photino exposes window.external.receiveMessage(callback).
+  _host.receiveMessage((json: string) => {
+    let msg: any;
+    try { msg = JSON.parse(json); } catch { return; }
+    if (msg && msg.event === true) {
+      const subs = _subs.get(msg.channel);
+      if (subs) subs.forEach((cb) => cb(msg.payload));
+      return;
+    }
+    if (msg && msg.callId !== undefined && _pending.has(msg.callId)) {
+      const { resolve, reject } = _pending.get(msg.callId)!;
+      _pending.delete(msg.callId);
+      if (msg.error) reject(new Error(msg.error));
+      else resolve(msg.result);
+    }
+  });
+
+  function _invoke(className: string, methodName: string, args: any[]): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const callId = ++_callId;
+      _pending.set(callId, { resolve, reject });
+      _host.sendMessage(JSON.stringify({ callId, className, methodName, args }));
+    });
+  }
+
+  // Subscribe to a host event channel. Returns an unsubscribe function.
+  function on(channel: string, callback: (payload: any) => void): () => void {
+    let subs = _subs.get(channel);
+    if (!subs) { subs = new Set(); _subs.set(channel, subs); }
+    subs.add(callback);
+    return () => off(channel, callback);
+  }
+
+  function off(channel: string, callback: (payload: any) => void): void {
+    const subs = _subs.get(channel);
+    if (subs) subs.delete(callback);
+  }
+
+{{Bindings}}  return {
+{{Exports}}    on,
+    off,
+  };
+})();
