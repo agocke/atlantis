@@ -78,7 +78,7 @@ const files = await atlantis.Api.ListFiles('/docs');       // async, ~ms
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Native Host Process (NativeAOT)                                            │
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  • Window management (Photino / WKWebView)                            │  │
+│  │  • Window management (WKWebView / WebView2 / WebKitGTK)              │  │
 │  │  • IPC message dispatcher                                             │  │
 │  │  • All [JSExport] methods                                             │  │
 │  │  • Full .NET API access                                               │  │

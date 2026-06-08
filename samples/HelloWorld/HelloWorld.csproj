@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!-- This sample consumes the framework via a project reference for the inner dev
+       loop. AtlantisApp selects the webview host per RID, so pass the matching leg
+       to the referenced project when publishing for iOS. -->
+  <ItemGroup>
+    <ProjectReference Include="../../src/Atlantis/Atlantis.csproj">
+      <AdditionalProperties Condition="$(RuntimeIdentifier.StartsWith('ios')) Or $(RuntimeIdentifier.StartsWith('iossimulator'))">AtlantisPlatform=iOS</AdditionalProperties>
+    </ProjectReference>
+  </ItemGroup>
+
+  <!-- iOS: link frameworks and Swift runtime for the app executable. -->
+  <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('ios')) Or $(RuntimeIdentifier.StartsWith('iossimulator'))">
+    <!-- Enable DirectPInvoke for __Internal to resolve symbols at link time, not dlopen -->
+    <DirectPInvokes>__Internal</DirectPInvokes>
+  </PropertyGroup>
+
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('ios')) Or $(RuntimeIdentifier.StartsWith('iossimulator'))">
+    <NativeFramework Include="UIKit" />
+    <NativeFramework Include="WebKit" />
+    <NativeFramework Include="SwiftUI" />
+    <!-- DirectPInvoke for __Internal - resolves Swift symbols at link time -->
+    <DirectPInvoke Include="__Internal" />
+    <!-- Ensure Swift runtime libraries resolve at runtime -->
+    <LinkerArg Include="-rpath" />
+    <LinkerArg Include="/usr/lib/swift" />
+    <!-- Keep Swift entry point symbol -->
+    <LinkerArg Include="-u" />
+    <LinkerArg Include="_atlantis_run" />
+  </ItemGroup>
+
+  <!-- Pass extra linker args (e.g., Swift object file) -->
+  <ItemGroup Condition="'$(ExtraLinkerArgs)' != ''">
+    <LinkerArg Include="$(ExtraLinkerArgs)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="frontend/**/*" LinkBase="frontend" />
+  </ItemGroup>
+
+</Project>

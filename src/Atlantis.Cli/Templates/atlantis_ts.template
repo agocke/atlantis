@@ -11,7 +11,7 @@ const atlantis = (() => {
   const _subs = new Map<string, Set<(payload: any) => void>>(); // channel -> Set<callback>
 
   // Receive responses and events from the native host.
-  // Photino exposes window.external.receiveMessage(callback).
+  // The host injects window.external.receiveMessage(callback).
   _host.receiveMessage((json: string) => {
     let msg: any;
     try { msg = JSON.parse(json); } catch { return; }

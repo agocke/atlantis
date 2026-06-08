@@ -5,13 +5,13 @@
 set -e
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="Atlantis"
+APP_NAME="HelloWorld"
 BUNDLE_ID="com.atlantis.app"
 RID="iossimulator-arm64"
-PROJECT_DIR="$REPO_ROOT/src/Atlantis"
-ARTIFACTS_DIR="$REPO_ROOT/artifacts/publish/Atlantis/release_$RID"
+PROJECT_DIR="$REPO_ROOT/samples/HelloWorld"
+ARTIFACTS_DIR="$REPO_ROOT/artifacts/publish/HelloWorld/release_$RID"
 OUTPUT_DIR="$REPO_ROOT/artifacts/app"
-NATIVE_DIR="$REPO_ROOT/src/ios"
+NATIVE_DIR="$REPO_ROOT/src/Atlantis/native/ios"
 OBJ_DIR="$REPO_ROOT/artifacts/obj/swift"
 
 # Determine target triple based on RID

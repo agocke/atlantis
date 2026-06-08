@@ -8,11 +8,18 @@
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Atlantis apps are Native AOT and always target a RuntimeIdentifier. Default to
+         the host RID so 'atl run' works; 'atl build -r ios-arm64' overrides it. The RID
+         also lets the Atlantis package pull in the right desktop webview at restore. -->
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkPortableRuntimeIdentifier)</RuntimeIdentifier>
   </PropertyGroup>
 
-  <!-- Desktop: use Photino -->
+  <!-- The Atlantis framework: webview host (AtlantisApp) + JS bridge. The native
+       webview is implemented inside this single package (no native dependencies), so
+       apps reference only this one package. -->
   <ItemGroup>
-    <PackageReference Include="Photino.NET" Version="4.0.16" />
+    <PackageReference Include="Atlantis" Version="{{AtlantisVersion}}" />
   </ItemGroup>
 
   <!-- Atlantis analyzers and code fixes (powers 'atl fix'). Dev/build-only. -->

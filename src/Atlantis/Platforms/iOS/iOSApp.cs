@@ -1,4 +1,4 @@
-#if IOS
+#if ATLANTIS_IOS
 using System.Runtime.InteropServices;
 
 namespace Atlantis.Platforms.iOS;

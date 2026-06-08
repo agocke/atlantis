@@ -1,16 +1,11 @@
-using System.Reflection;
-using Photino.NET;
+using Atlantis;
 
-// Serve the embedded web frontend. 'atl bindgen' generates frontend/atlantis.js
-// (the JS bridge) next to index.html; it is inlined here so Photino can load a
-// single document. Run 'atl bindgen' whenever your [AtlExport] API changes.
-var window = new PhotinoWindow()
-    .SetTitle("{{ProjectName}}")
-    .SetSize(800, 600)
-    .Center()
-    .LoadRawString(Frontend.IndexHtml());
-
-window.WaitForClose();
+// AtlantisApp owns the native webview host (WKWebView on macOS and iOS),
+// so your app never references a platform webview type directly. 'atl bindgen'
+// generates frontend/atlantis.js (the JS bridge) next to index.html; it is inlined
+// here so the webview can load a single document. Run 'atl bindgen' whenever your
+// [AtlExport] API changes.
+AtlantisApp.Run("{{ProjectName}}", Frontend.IndexHtml());
 
 static class Frontend
 {
@@ -19,7 +14,7 @@ static class Frontend
         var html = ReadResource("{{ProjectName}}.frontend.index.html");
         var js = TryReadResource("{{ProjectName}}.frontend.atlantis.js");
 
-        // Inline the generated bridge when present so Photino serves one document.
+        // Inline the generated bridge when present so the webview serves one document.
         // Until 'atl bindgen' has run, the page still loads without the bridge.
         return js is null
             ? html
@@ -28,7 +23,7 @@ static class Frontend
 
     private static string ReadResource(string name)
     {
-        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(name)
+        using var stream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream(name)
             ?? throw new InvalidOperationException($"Embedded resource '{name}' not found.");
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
@@ -36,7 +31,7 @@ static class Frontend
 
     private static string? TryReadResource(string name)
     {
-        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(name);
+        using var stream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream(name);
         if (stream is null)
             return null;
         using var reader = new StreamReader(stream);
