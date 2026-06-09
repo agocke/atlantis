@@ -9,7 +9,7 @@ namespace Atlantis.Bridge;
 /// <remarks>
 /// Wire protocol (all messages are JSON):
 /// <list type="bullet">
-///   <item>JS → host request: <c>{ "callId": n, "className": "Api", "methodName": "Foo", "args": [...] }</c></item>
+///   <item>JS → host request: <c>{ "callId": n, "method": "Api.Foo", "args": [...] }</c></item>
 ///   <item>host → JS response: <c>{ "callId": n, "result": &lt;json&gt; }</c> or <c>{ "callId": n, "error": "..." }</c></item>
 ///   <item>host → JS event:    <c>{ "event": true, "channel": "...", "payload": &lt;json&gt; }</c></item>
 /// </list>
@@ -20,10 +20,10 @@ public sealed class BridgeHost
 {
     private readonly IBridgeTransport _transport;
 
-    // Maps "className.methodName" to its handler. A handler receives the JSON args
-    // array and returns its result already serialized as a JSON string (or null for
-    // a void result), keeping the bridge free of reflection and the app's concrete
-    // types so it stays Native AOT safe.
+    // Maps a fully-qualified "Class.Method" name to its handler. A handler receives
+    // the JSON args array and returns its result already serialized as a JSON string
+    // (or null for a void result), keeping the bridge free of reflection and the
+    // app's concrete types so it stays Native AOT safe.
     private readonly Dictionary<string, Func<JsonElement, Task<string?>>> _handlers
         = new(StringComparer.Ordinal);
 
@@ -44,9 +44,12 @@ public sealed class BridgeHost
         _ = bridge.RunAsync(cancellationToken);
     }
 
-    /// <summary>Register a handler for <c>className.methodName</c>.</summary>
-    public void Register(string className, string methodName, Func<JsonElement, Task<string?>> handler)
-        => _handlers[Key(className, methodName)] = handler;
+    /// <summary>
+    /// Register a handler for the fully-qualified <paramref name="method"/> name,
+    /// e.g. <c>"Api.Hello"</c>.
+    /// </summary>
+    public void Register(string method, Func<JsonElement, Task<string?>> handler)
+        => _handlers[method] = handler;
 
     /// <summary>
     /// Push an event to all JavaScript subscribers of <paramref name="channel"/>.
@@ -102,12 +105,11 @@ public sealed class BridgeHost
 
         try
         {
-            var className = request.ClassName ?? "";
-            var methodName = request.MethodName ?? "";
+            var method = request.Method ?? "";
 
-            if (!_handlers.TryGetValue(Key(className, methodName), out var handler))
+            if (!_handlers.TryGetValue(method, out var handler))
             {
-                await SendError(callId, $"No handler registered for {className}.{methodName}").ConfigureAwait(false);
+                await SendError(callId, $"No handler registered for {method}").ConfigureAwait(false);
                 return;
             }
 
@@ -142,6 +144,4 @@ public sealed class BridgeHost
         using var doc = JsonDocument.Parse(string.IsNullOrEmpty(json) ? "null" : json);
         return doc.RootElement.Clone();
     }
-
-    private static string Key(string className, string methodName) => className + "." + methodName;
 }

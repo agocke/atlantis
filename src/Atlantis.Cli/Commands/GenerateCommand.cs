@@ -82,7 +82,7 @@ public static class GenerateCommand
                 var paramList = string.Join(", ", method.Parameters.Select(p => $"{p.Name}: {MapToTypeScript(p.Type)}"));
                 var paramNames = string.Join(", ", method.Parameters.Select(p => p.Name));
                 var tsReturn = MapToTypeScript(method.ReturnType);
-                bindings.AppendLine($"    {method.MethodName}: ({paramList}): Promise<{tsReturn}> => _invoke('{group.Key}', '{method.MethodName}', [{paramNames}]),");
+                bindings.AppendLine($"    {method.MethodName}: ({paramList}): Promise<{tsReturn}> => _invoke('{group.Key}.{method.MethodName}', [{paramNames}]),");
             }
             bindings.AppendLine("  };");
             bindings.AppendLine();

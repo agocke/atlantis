@@ -4,15 +4,14 @@ using System.Text.Json.Serialization;
 namespace Atlantis.Bridge;
 
 /// <summary>
-/// A request coming from JavaScript: a call to <c>className.methodName</c> with a
-/// JSON <c>args</c> array. <see cref="CallId"/> is nullable so non-request messages
-/// (which lack it) can be told apart and ignored.
+/// A request coming from JavaScript: a call to the fully-qualified <c>Method</c>
+/// (<c>"ClassName.MethodName"</c>) with a JSON <c>args</c> array. <see cref="CallId"/>
+/// is nullable so non-request messages (which lack it) can be told apart and ignored.
 /// </summary>
 internal sealed class BridgeRequest
 {
     public int? CallId { get; set; }
-    public string? ClassName { get; set; }
-    public string? MethodName { get; set; }
+    public string? Method { get; set; }
     public JsonElement Args { get; set; }
 }
 

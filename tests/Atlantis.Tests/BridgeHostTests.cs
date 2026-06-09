@@ -64,13 +64,13 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Calc", "Add", args =>
+            host.Register("Calc.Add", args =>
             {
                 int sum = args[0].GetInt32() + args[1].GetInt32();
                 return Task.FromResult<string?>(sum.ToString());
             });
 
-            transport.Post("""{"callId":1,"className":"Calc","methodName":"Add","args":[2,3]}""");
+            transport.Post("""{"callId":1,"method":"Calc.Add","args":[2,3]}""");
 
             var reply = await NextMessage(transport);
             Assert.Equal(1, reply.GetProperty("callId").GetInt32());
@@ -85,13 +85,13 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Echo", "Concat", args =>
+            host.Register("Echo.Concat", args =>
             {
                 string joined = args[0].GetString() + args[1].GetString();
                 return Task.FromResult<string?>(JsonSerializer.Serialize(joined));
             });
 
-            transport.Post("""{"callId":7,"className":"Echo","methodName":"Concat","args":["foo","bar"]}""");
+            transport.Post("""{"callId":7,"method":"Echo.Concat","args":["foo","bar"]}""");
 
             var reply = await NextMessage(transport);
             Assert.Equal(7, reply.GetProperty("callId").GetInt32());
@@ -105,9 +105,9 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Logger", "Log", _ => Task.FromResult<string?>(null));
+            host.Register("Logger.Log", _ => Task.FromResult<string?>(null));
 
-            transport.Post("""{"callId":2,"className":"Logger","methodName":"Log","args":["hi"]}""");
+            transport.Post("""{"callId":2,"method":"Logger.Log","args":["hi"]}""");
 
             var reply = await NextMessage(transport);
             Assert.Equal(2, reply.GetProperty("callId").GetInt32());
@@ -121,7 +121,7 @@ public class BridgeHostTests
         var (_, transport, pump) = Start();
         using (pump)
         {
-            transport.Post("""{"callId":3,"className":"Nope","methodName":"Missing","args":[]}""");
+            transport.Post("""{"callId":3,"method":"Nope.Missing","args":[]}""");
 
             var reply = await NextMessage(transport);
             Assert.Equal(3, reply.GetProperty("callId").GetInt32());
@@ -135,9 +135,9 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Boom", "Go", _ => throw new InvalidOperationException("kaboom"));
+            host.Register("Boom.Go", _ => throw new InvalidOperationException("kaboom"));
 
-            transport.Post("""{"callId":4,"className":"Boom","methodName":"Go","args":[]}""");
+            transport.Post("""{"callId":4,"method":"Boom.Go","args":[]}""");
 
             var reply = await NextMessage(transport);
             Assert.Equal(4, reply.GetProperty("callId").GetInt32());
@@ -151,10 +151,10 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Calc", "Add", _ => Task.FromResult<string?>("1"));
-            host.Register("Calc", "Add", _ => Task.FromResult<string?>("2"));
+            host.Register("Calc.Add", _ => Task.FromResult<string?>("1"));
+            host.Register("Calc.Add", _ => Task.FromResult<string?>("2"));
 
-            transport.Post("""{"callId":1,"className":"Calc","methodName":"Add","args":[]}""");
+            transport.Post("""{"callId":1,"method":"Calc.Add","args":[]}""");
 
             var reply = await NextMessage(transport);
             Assert.Equal(2, reply.GetProperty("result").GetInt32());
@@ -182,13 +182,13 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Calc", "Add", args =>
+            host.Register("Calc.Add", args =>
                 Task.FromResult<string?>((args[0].GetInt32() + args[1].GetInt32()).ToString()));
 
             // A frame with no callId has no caller to answer, so it's dropped - but it
             // must not take down the pump or the other calls in flight.
             transport.Post("""{"event":true,"channel":"x"}""");
-            transport.Post("""{"callId":9,"className":"Calc","methodName":"Add","args":[1,1]}""");
+            transport.Post("""{"callId":9,"method":"Calc.Add","args":[1,1]}""");
 
             var reply = await NextMessage(transport);
             Assert.Equal(9, reply.GetProperty("callId").GetInt32());
@@ -202,11 +202,11 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Calc", "Add", args =>
+            host.Register("Calc.Add", args =>
                 Task.FromResult<string?>((args[0].GetInt32() + args[1].GetInt32()).ToString()));
 
             transport.Post("this is not json");
-            transport.Post("""{"callId":10,"className":"Calc","methodName":"Add","args":[3,4]}""");
+            transport.Post("""{"callId":10,"method":"Calc.Add","args":[3,4]}""");
 
             var reply = await NextMessage(transport);
             Assert.Equal(10, reply.GetProperty("callId").GetInt32());
