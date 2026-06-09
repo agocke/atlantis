@@ -2,6 +2,8 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text;
+using System.Threading.Channels;
 using Atlantis.Bridge;
 
 namespace Atlantis;
@@ -62,9 +64,13 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
     private static IntPtr _userDataFolderPtr;
 
     // Outbound messages marshalled onto the UI thread via WM_APP_SEND.
-    private static readonly ConcurrentQueue<string> s_sendQueue = new();
+    private static readonly ConcurrentQueue<(string Message, TaskCompletionSource Tcs)> s_sendQueue = new();
 
-    public event Action<string>? MessageReceived;
+    private readonly Channel<ReadOnlyMemory<byte>> _incoming =
+        Channel.CreateUnbounded<ReadOnlyMemory<byte>>(new UnboundedChannelOptions { SingleReader = true });
+
+    public Task<ReadOnlyMemory<byte>> ReceiveAsync(CancellationToken cancellationToken = default)
+        => _incoming.Reader.ReadAsync(cancellationToken).AsTask();
 
     public static void Run(string title, string html, Action<BridgeHost>? configure)
     {
@@ -92,11 +98,9 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
 
         var host = new WindowsWebViewHost();
         _current = host;
+        using var pumpCts = new CancellationTokenSource();
         if (configure is not null)
-        {
-            var bridge = new BridgeHost(host);
-            configure(bridge);
-        }
+            BridgeHost.Attach(host, configure, pumpCts.Token);
 
         ShowWindow(_hwnd, 5 /* SW_SHOW */);
         UpdateWindow(_hwnd);
@@ -125,18 +129,23 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
             DispatchMessageW(ref msg);
         }
 
+        pumpCts.Cancel();
         _current = null;
     }
 
-    /// <summary>Push a raw message to the webview via WebView2's PostWebMessageAsString.</summary>
-    public void Send(string message)
+    /// <summary>Push a raw UTF-8 message to the webview via WebView2's PostWebMessageAsString.</summary>
+    public Task Send(ReadOnlyMemory<byte> message)
     {
-        // WebView2 is thread-affine; hand off to the UI thread's message loop.
-        s_sendQueue.Enqueue(message);
+        // WebView2's message API is UTF-16 (LPCWSTR) only, so decode the UTF-8 envelope to
+        // a string here - the one transcode the platform forces. WebView2 is thread-affine;
+        // hand off to the UI thread's message loop and complete once it has been posted.
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        s_sendQueue.Enqueue((Encoding.UTF8.GetString(message.Span), tcs));
         PostMessageW(_hwnd, WM_APP_SEND, UIntPtr.Zero, IntPtr.Zero);
+        return tcs.Task;
     }
 
-    private void OnNativeMessage(string message) => MessageReceived?.Invoke(message);
+    private void OnNativeMessage(ReadOnlyMemory<byte> message) => _incoming.Writer.TryWrite(message);
 
     // ---- Win32 window procedure ----
 
@@ -161,9 +170,17 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
             case WM_APP_SEND:
                 if (_webview != IntPtr.Zero)
                 {
-                    while (s_sendQueue.TryDequeue(out string? message))
+                    while (s_sendQueue.TryDequeue(out var item))
                     {
-                        CallString(_webview, 33 /* PostWebMessageAsString */, message);
+                        try
+                        {
+                            CallString(_webview, 33 /* PostWebMessageAsString */, item.Message);
+                            item.Tcs.SetResult();
+                        }
+                        catch (Exception ex)
+                        {
+                            item.Tcs.SetException(ex);
+                        }
                     }
                 }
                 return IntPtr.Zero;
@@ -251,7 +268,7 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
         Marshal.FreeCoTaskMem(strPtr); // ownership transfers to the caller
         if (text is not null)
         {
-            _current?.OnNativeMessage(text);
+            _current?.OnNativeMessage(Encoding.UTF8.GetBytes(text));
         }
 
         return 0;

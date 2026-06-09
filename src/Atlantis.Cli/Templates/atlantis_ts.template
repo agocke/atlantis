@@ -28,11 +28,11 @@ const atlantis = (() => {
     }
   });
 
-  function _invoke(className: string, methodName: string, args: any[]): Promise<any> {
+  function _invoke(method: string, args: any[]): Promise<any> {
     return new Promise((resolve, reject) => {
       const callId = ++_callId;
       _pending.set(callId, { resolve, reject });
-      _host.sendMessage(JSON.stringify({ callId, className, methodName, args }));
+      _host.sendMessage(JSON.stringify({ callId, method, args }));
     });
   }
 
