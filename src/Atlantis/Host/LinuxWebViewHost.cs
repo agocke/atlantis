@@ -58,14 +58,42 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport, IFileDialogPro
         _window = window;
     }
 
-    public static void Run(string title, string html, Action<BridgeHost>? configure)
+    public static void Run(WindowOptions options, string html, Action<BridgeHost>? configure)
     {
         gtk_init(IntPtr.Zero, IntPtr.Zero);
 
         IntPtr window = gtk_window_new(0 /* GTK_WINDOW_TOPLEVEL */);
-        gtk_window_set_title(window, title);
-        gtk_window_set_default_size(window, 800, 600);
-        gtk_window_set_position(window, 1 /* GTK_WIN_POS_CENTER */);
+        gtk_window_set_title(window, options.Title);
+        // GTK works in logical (device-independent) pixels and scales by the monitor's
+        // factor itself, so the logical options map directly.
+        gtk_window_set_default_size(window, (int)options.Width, (int)options.Height);
+        gtk_window_set_resizable(window, options.Resizable ? 1 : 0);
+        gtk_window_set_decorated(window, options.Decorations ? 1 : 0);
+
+        if (options.MinWidth is not null || options.MinHeight is not null ||
+            options.MaxWidth is not null || options.MaxHeight is not null)
+        {
+            var geometry = new GdkGeometry
+            {
+                MinWidth = (int)(options.MinWidth ?? 0),
+                MinHeight = (int)(options.MinHeight ?? 0),
+                MaxWidth = (int)(options.MaxWidth ?? int.MaxValue),
+                MaxHeight = (int)(options.MaxHeight ?? int.MaxValue),
+            };
+            int mask = 0;
+            if (options.MinWidth is not null || options.MinHeight is not null) mask |= 1 << 1; // GDK_HINT_MIN_SIZE
+            if (options.MaxWidth is not null || options.MaxHeight is not null) mask |= 1 << 2; // GDK_HINT_MAX_SIZE
+            gtk_window_set_geometry_hints(window, IntPtr.Zero, ref geometry, mask);
+        }
+
+        if (options.Center)
+            gtk_window_set_position(window, 1 /* GTK_WIN_POS_CENTER */);
+        else if (options.X is not null || options.Y is not null)
+            gtk_window_move(window, (int)(options.X ?? 0), (int)(options.Y ?? 0));
+
+        if (options.AlwaysOnTop) gtk_window_set_keep_above(window, 1);
+        if (options.Maximized) gtk_window_maximize(window);
+        if (options.Fullscreen) gtk_window_fullscreen(window);
 
         // Quit the GTK main loop when the window is closed.
         Connect(window, "destroy", (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, void>)&OnDestroy, IntPtr.Zero);
@@ -97,7 +125,8 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport, IFileDialogPro
         BridgeHost.Attach(host, configure, pumpCts.Token);
 
         webkit_web_view_load_html(webview, html, IntPtr.Zero);
-        gtk_widget_show_all(window);
+        if (options.Visible)
+            gtk_widget_show_all(window);
 
         gtk_main();
         pumpCts.Cancel();
@@ -300,6 +329,13 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport, IFileDialogPro
     [DllImport(Gtk, CharSet = CharSet.Ansi)] private static extern void gtk_window_set_title(IntPtr window, string title);
     [DllImport(Gtk)] private static extern void gtk_window_set_default_size(IntPtr window, int width, int height);
     [DllImport(Gtk)] private static extern void gtk_window_set_position(IntPtr window, int position);
+    [DllImport(Gtk)] private static extern void gtk_window_set_resizable(IntPtr window, int resizable);
+    [DllImport(Gtk)] private static extern void gtk_window_set_decorated(IntPtr window, int decorated);
+    [DllImport(Gtk)] private static extern void gtk_window_move(IntPtr window, int x, int y);
+    [DllImport(Gtk)] private static extern void gtk_window_maximize(IntPtr window);
+    [DllImport(Gtk)] private static extern void gtk_window_fullscreen(IntPtr window);
+    [DllImport(Gtk)] private static extern void gtk_window_set_keep_above(IntPtr window, int setting);
+    [DllImport(Gtk)] private static extern void gtk_window_set_geometry_hints(IntPtr window, IntPtr widget, ref GdkGeometry geometry, int geomMask);
     [DllImport(Gtk)] private static extern void gtk_container_add(IntPtr container, IntPtr widget);
     [DllImport(Gtk)] private static extern void gtk_widget_show_all(IntPtr widget);
     [DllImport(Gtk)] private static extern void gtk_main();
@@ -349,5 +385,24 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport, IFileDialogPro
 
     [DllImport(GObject, CharSet = CharSet.Ansi)]
     private static extern ulong g_signal_connect_data(IntPtr instance, string detailedSignal, IntPtr handler, IntPtr data, IntPtr destroyData, int connectFlags);
+
+    // GdkGeometry: window size constraints passed to gtk_window_set_geometry_hints. Only
+    // the leading min/max fields are used here; the rest are zeroed (their hint bits are
+    // never set, so GTK ignores them).
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GdkGeometry
+    {
+        public int MinWidth;
+        public int MinHeight;
+        public int MaxWidth;
+        public int MaxHeight;
+        public int BaseWidth;
+        public int BaseHeight;
+        public int WidthInc;
+        public int HeightInc;
+        public double MinAspect;
+        public double MaxAspect;
+        public int WinGravity;
+    }
 }
 #endif

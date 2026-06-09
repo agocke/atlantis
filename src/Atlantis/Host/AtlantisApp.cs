@@ -11,22 +11,36 @@ namespace Atlantis;
 public static class AtlantisApp
 {
     /// <summary>
-    /// Create the webview, load <paramref name="html"/>, and run until the window
-    /// closes. When <paramref name="configure"/> is supplied, a <see cref="BridgeHost"/>
-    /// is attached to the webview before it is shown so the app can register the
-    /// handlers backing its <c>[AtlExport]</c> methods.
+    /// Create the webview with a titled default window, load <paramref name="html"/>,
+    /// and run until the window closes. Convenience overload for
+    /// <see cref="Run(string, WindowOptions, Action{BridgeHost})"/> that only sets the
+    /// window title.
     /// </summary>
     /// <param name="title">Window title (desktop only; ignored on platforms without a title bar).</param>
     /// <param name="html">The HTML document to display.</param>
     /// <param name="configure">Optional callback to register bridge handlers.</param>
     public static void Run(string title, string html, Action<BridgeHost>? configure = null)
+        => Run(html, new WindowOptions { Title = title }, configure);
+
+    /// <summary>
+    /// Create the webview configured by <paramref name="options"/>, load
+    /// <paramref name="html"/>, and run until the window closes. When
+    /// <paramref name="configure"/> is supplied, a <see cref="BridgeHost"/> is attached
+    /// to the webview before it is shown so the app can register the handlers backing
+    /// its <c>[AtlExport]</c> methods.
+    /// </summary>
+    /// <param name="html">The HTML document to display.</param>
+    /// <param name="options">Window configuration (size, position, decorations, ...).</param>
+    /// <param name="configure">Optional callback to register bridge handlers.</param>
+    public static void Run(string html, WindowOptions options, Action<BridgeHost>? configure = null)
     {
+        ArgumentNullException.ThrowIfNull(options);
 #if ATLANTIS_IOS
-        // iOS currently displays the document via WKWebView; the JS bridge transport
-        // for iOS is not wired yet, so configure is not invoked on this platform.
+        // iOS is a single full-screen WKWebView, so window options are ignored. The JS
+        // bridge transport for iOS is not wired yet, so configure is not invoked here.
         Platforms.iOS.iOSApp.Run(html);
 #elif ATLANTIS_DESKTOP
-        DesktopHost.Run(title, html, configure);
+        DesktopHost.Run(html, options, configure);
 #else
 #error Unsupported platform
 #endif
