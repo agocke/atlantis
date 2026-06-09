@@ -24,9 +24,9 @@ public sealed class BridgeHost
 
     // Maps a fully-qualified "Class.Method" name to its handler. A handler receives
     // the JSON args array and returns its result already serialized as UTF-8 JSON
-    // (or an empty buffer for a void result), keeping the bridge free of reflection
-    // and the app's concrete types so it stays Native AOT safe.
-    private readonly Dictionary<string, Func<JsonElement, Task<ReadOnlyMemory<byte>>>> _handlers
+    // (or null for a void result), keeping the bridge free of reflection and the
+    // app's concrete types so it stays Native AOT safe.
+    private readonly Dictionary<string, Func<JsonElement, Task<ReadOnlyMemory<byte>?>>> _handlers
         = new(StringComparer.Ordinal);
 
     internal BridgeHost(IBridgeTransport transport)
@@ -49,9 +49,9 @@ public sealed class BridgeHost
     /// <summary>
     /// Register a handler for the fully-qualified <paramref name="method"/> name,
     /// e.g. <c>"Api.Hello"</c>. The handler returns its result as already-serialized
-    /// UTF-8 JSON, or an empty buffer for a void result.
+    /// UTF-8 JSON, or <c>null</c> for a void result.
     /// </summary>
-    public void Register(string method, Func<JsonElement, Task<ReadOnlyMemory<byte>>> handler)
+    public void Register(string method, Func<JsonElement, Task<ReadOnlyMemory<byte>?>> handler)
         => _handlers[method] = handler;
 
     /// <summary>
@@ -139,7 +139,7 @@ public sealed class BridgeHost
         }
     }
 
-    private Task SendResult(int callId, ReadOnlyMemory<byte> result)
+    private Task SendResult(int callId, ReadOnlyMemory<byte>? result)
     {
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer))
@@ -147,12 +147,11 @@ public sealed class BridgeHost
             writer.WriteStartObject();
             writer.WriteNumber("callId", callId);
             writer.WritePropertyName("result");
-            // Embed the handler's already-serialized UTF-8 result verbatim. An empty
-            // buffer means the handler returned void.
-            if (result.IsEmpty)
+            // Embed the handler's already-serialized UTF-8 result verbatim (null for void).
+            if (result is null)
                 writer.WriteNullValue();
             else
-                writer.WriteRawValue(result.Span);
+                writer.WriteRawValue(result.Value.Span);
             writer.WriteEndObject();
         }
         return _transport.Send(buffer.WrittenMemory);
