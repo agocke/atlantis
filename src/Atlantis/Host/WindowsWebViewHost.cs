@@ -53,6 +53,7 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
     private static IntPtr _webview;
 
     private static string _html = string.Empty;
+    private static WindowOptions _options = new();
 
     // Callback objects (CCWs) handed to WebView2; kept alive for the process lifetime.
     private static IntPtr _envHandler;
@@ -72,9 +73,15 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
     public Task<ReadOnlyMemory<byte>> ReceiveAsync(CancellationToken cancellationToken = default)
         => _incoming.Reader.ReadAsync(cancellationToken).AsTask();
 
-    public static void Run(string title, string html, Action<BridgeHost>? configure)
+    public static void Run(WindowOptions options, string html, Action<BridgeHost>? configure)
     {
         _html = html;
+        _options = options;
+
+        // Become per-monitor DPI aware so the client area maps 1:1 to physical pixels
+        // and WebView2 rasterizes crisply. Best-effort: ignored on older Windows, where
+        // GetDpiForWindow then reports 96 and logical units pass through unscaled.
+        SetProcessDpiAwarenessContext((IntPtr)(-4) /* PER_MONITOR_AWARE_V2 */);
 
         IntPtr hInstance = GetModuleHandleW(null);
         _classNamePtr = Marshal.StringToHGlobalUni("AtlantisWindow");
@@ -89,12 +96,46 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
         };
         RegisterClassExW(ref wndClass);
 
+        uint style = WindowStyle(options);
+
+        // Create at a default spot first so the window picks up its monitor's DPI, then
+        // size and position it from the logical options scaled to that DPI.
         _hwnd = CreateWindowExW(
-            0, _classNamePtr, title,
-            0x00CF0000 /* WS_OVERLAPPEDWINDOW */,
+            0, _classNamePtr, options.Title, style,
             unchecked((int)0x80000000), unchecked((int)0x80000000), // CW_USEDEFAULT x, y
-            800, 600,
+            unchecked((int)0x80000000), unchecked((int)0x80000000), // CW_USEDEFAULT w, h
             IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero);
+
+        uint dpi = GetDpiForWindow(_hwnd);
+        if (dpi == 0) dpi = 96;
+
+        int x, y, winW, winH;
+        if (options.Fullscreen)
+        {
+            // Borderless full-screen cover of the primary monitor.
+            x = 0;
+            y = 0;
+            winW = GetSystemMetrics(0 /* SM_CXSCREEN */);
+            winH = GetSystemMetrics(1 /* SM_CYSCREEN */);
+        }
+        else
+        {
+            (winW, winH) = ClientToWindow(options.Width, options.Height, dpi, style);
+            if (options.Center || (options.X is null && options.Y is null))
+            {
+                RECT work = GetWorkArea();
+                x = work.Left + ((work.Right - work.Left) - winW) / 2;
+                y = work.Top + ((work.Bottom - work.Top) - winH) / 2;
+            }
+            else
+            {
+                x = Scale(options.X ?? 0, dpi);
+                y = Scale(options.Y ?? 0, dpi);
+            }
+        }
+
+        IntPtr insertAfter = options.AlwaysOnTop ? (IntPtr)(-1) /* HWND_TOPMOST */ : (IntPtr)0 /* HWND_TOP */;
+        SetWindowPos(_hwnd, insertAfter, x, y, winW, winH, 0x0010 /* SWP_NOACTIVATE */);
 
         var host = new WindowsWebViewHost();
         _current = host;
@@ -102,8 +143,12 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
         if (configure is not null)
             BridgeHost.Attach(host, configure, pumpCts.Token);
 
-        ShowWindow(_hwnd, 5 /* SW_SHOW */);
-        UpdateWindow(_hwnd);
+        int showCmd = (options.Maximized && !options.Fullscreen) ? 3 /* SW_MAXIMIZE */
+            : options.Visible ? 5 /* SW_SHOW */
+            : 0 /* SW_HIDE */;
+        ShowWindow(_hwnd, showCmd);
+        if (options.Visible)
+            UpdateWindow(_hwnd);
 
         // Build the WebView2 callback objects, then kick off async environment creation.
         // The completion handlers fire on this (UI) thread while the message loop runs.
@@ -151,6 +196,7 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
 
     private const uint WM_DESTROY = 0x0002;
     private const uint WM_SIZE = 0x0005;
+    private const uint WM_GETMINMAXINFO = 0x0024;
     private const uint WM_APP_SEND = 0x8000; // WM_APP
 
     [UnmanagedCallersOnly]
@@ -158,6 +204,11 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
     {
         switch (msg)
         {
+            case WM_GETMINMAXINFO:
+                if (ApplyMinMax(hwnd, lParam))
+                    return IntPtr.Zero;
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
+
             case WM_SIZE:
                 if (_controller != IntPtr.Zero)
                 {
@@ -274,6 +325,66 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
         return 0;
     }
 
+    // ---- Window option mapping ----
+
+    // Win32 window styles.
+    private const uint WS_OVERLAPPEDWINDOW = 0x00CF0000;
+    private const uint WS_THICKFRAME = 0x00040000;
+    private const uint WS_MAXIMIZEBOX = 0x00010000;
+    private const uint WS_POPUP = 0x80000000;
+
+    private static uint WindowStyle(WindowOptions options)
+    {
+        if (options.Fullscreen || !options.Decorations)
+            return WS_POPUP | (options.Resizable && !options.Fullscreen ? WS_THICKFRAME : 0);
+
+        uint style = WS_OVERLAPPEDWINDOW;
+        if (!options.Resizable)
+            style &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+        return style;
+    }
+
+    // Scale a logical length to physical pixels at the given DPI.
+    private static int Scale(double logical, uint dpi) => (int)Math.Round(logical * dpi / 96.0);
+
+    // Convert a logical client size to the physical outer window size (including the
+    // frame) at the given DPI, so the content area ends up the requested logical size.
+    private static (int Width, int Height) ClientToWindow(double logicalW, double logicalH, uint dpi, uint style)
+    {
+        var rc = new RECT { Left = 0, Top = 0, Right = Scale(logicalW, dpi), Bottom = Scale(logicalH, dpi) };
+        AdjustWindowRectExForDpi(ref rc, style, false, 0, dpi);
+        return (rc.Right - rc.Left, rc.Bottom - rc.Top);
+    }
+
+    private static RECT GetWorkArea()
+    {
+        RECT work;
+        // SPI_GETWORKAREA = 0x0030; falls back to the full primary screen on failure.
+        if (!SystemParametersInfoW(0x0030, 0, out work, 0))
+            work = new RECT { Left = 0, Top = 0, Right = GetSystemMetrics(0), Bottom = GetSystemMetrics(1) };
+        return work;
+    }
+
+    // Apply the configured min/max content sizes to a WM_GETMINMAXINFO request. Returns
+    // false when no constraint is set, so the caller can defer to DefWindowProc.
+    private static bool ApplyMinMax(IntPtr hwnd, IntPtr lParam)
+    {
+        var o = _options;
+        if (o.MinWidth is null && o.MinHeight is null && o.MaxWidth is null && o.MaxHeight is null)
+            return false;
+
+        uint dpi = GetDpiForWindow(hwnd);
+        if (dpi == 0) dpi = 96;
+        uint style = (uint)GetWindowLongPtrW(hwnd, -16 /* GWL_STYLE */).ToInt64();
+
+        MINMAXINFO* mmi = (MINMAXINFO*)lParam;
+        if (o.MinWidth is double minW) mmi->ptMinTrackSize.X = ClientToWindow(minW, 0, dpi, style).Width;
+        if (o.MinHeight is double minH) mmi->ptMinTrackSize.Y = ClientToWindow(0, minH, dpi, style).Height;
+        if (o.MaxWidth is double maxW) mmi->ptMaxTrackSize.X = ClientToWindow(maxW, 0, dpi, style).Width;
+        if (o.MaxHeight is double maxH) mmi->ptMaxTrackSize.Y = ClientToWindow(0, maxH, dpi, style).Height;
+        return true;
+    }
+
     // ---- Manual COM plumbing ----
 
     /// <summary>Read the function pointer at <paramref name="slot"/> of a COM object's vtable.</summary>
@@ -348,6 +459,20 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
     [DllImport("user32")] private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
     [DllImport("user32")] private static extern void PostQuitMessage(int nExitCode);
 
+    [DllImport("user32")] private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+    [DllImport("user32")] private static extern uint GetDpiForWindow(IntPtr hWnd);
+    [DllImport("user32")] private static extern int GetSystemMetrics(int nIndex);
+    [DllImport("user32")] private static extern IntPtr GetWindowLongPtrW(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32")]
+    private static extern bool AdjustWindowRectExForDpi(ref RECT lpRect, uint dwStyle, bool bMenu, uint dwExStyle, uint dpi);
+
+    [DllImport("user32")]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
+
+    [DllImport("user32")]
+    private static extern bool SystemParametersInfoW(uint uiAction, uint uiParam, out RECT pvParam, uint fWinIni);
+
     [DllImport("user32")]
     private static extern bool PostMessageW(IntPtr hWnd, uint msg, UIntPtr wParam, IntPtr lParam);
 
@@ -402,6 +527,23 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
         public int Top;
         public int Right;
         public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MINMAXINFO
+    {
+        public POINT ptReserved;
+        public POINT ptMaxSize;
+        public POINT ptMaxPosition;
+        public POINT ptMinTrackSize;
+        public POINT ptMaxTrackSize;
     }
 }
 #endif
