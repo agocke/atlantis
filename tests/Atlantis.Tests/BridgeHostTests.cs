@@ -179,6 +179,17 @@ public class BridgeHostTests
     }
 
     [Fact]
+    public async Task Publish_rejects_a_missing_payload()
+    {
+        var (host, _, pump) = Start();
+        using (pump)
+        {
+            await Assert.ThrowsAsync<ArgumentException>(() => host.Publish("ticks", ""));
+            await Assert.ThrowsAsync<ArgumentNullException>(() => host.Publish("ticks", null!));
+        }
+    }
+
+    [Fact]
     public async Task Message_without_callId_is_dropped_without_killing_the_pump()
     {
         var (host, transport, pump) = Start();

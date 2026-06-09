@@ -60,6 +60,8 @@ public sealed class BridgeHost
     /// </summary>
     public Task Publish(string channel, string payloadJson)
     {
+        ArgumentException.ThrowIfNullOrEmpty(payloadJson);
+
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer))
         {
@@ -68,8 +70,8 @@ public sealed class BridgeHost
             writer.WriteString("channel", channel);
             writer.WritePropertyName("payload");
             // Embed the already-serialized payload verbatim instead of parsing and
-            // re-serializing it.
-            writer.WriteRawValue(string.IsNullOrEmpty(payloadJson) ? "null" : payloadJson);
+            // re-serializing it. WriteRawValue validates that it is well-formed JSON.
+            writer.WriteRawValue(payloadJson);
             writer.WriteEndObject();
         }
         return _transport.Send(buffer.WrittenMemory);
