@@ -14,19 +14,19 @@ namespace Atlantis;
 /// </summary>
 internal static class DesktopHost
 {
-    public static void Run(string title, string html, Action<BridgeHost>? configure)
+    public static void Run(string html, WindowOptions options, Action<BridgeHost>? configure)
     {
         if (OperatingSystem.IsMacOS())
         {
-            MacWebViewHost.Run(title, html, configure);
+            MacWebViewHost.Run(options, html, configure);
         }
         else if (OperatingSystem.IsWindows())
         {
-            WindowsWebViewHost.Run(title, html, configure);
+            WindowsWebViewHost.Run(options, html, configure);
         }
         else if (OperatingSystem.IsLinux())
         {
-            LinuxWebViewHost.Run(title, html, configure);
+            LinuxWebViewHost.Run(options, html, configure);
         }
         else
         {
@@ -86,7 +86,7 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
 
     private MacWebViewHost(IntPtr webview) => _webview = webview;
 
-    public static void Run(string title, string html, Action<BridgeHost>? configure)
+    public static void Run(WindowOptions options, string html, Action<BridgeHost>? configure)
     {
         EnsureInitialized();
 
@@ -97,14 +97,30 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
         IntPtr appDelegate = SendPtr(SendPtr(_appDelegateClass, Sel("alloc")), Sel("init"));
         SendVoid(nsApp, Sel("setDelegate:"), appDelegate);
 
-        // Window.
-        var frame = new CGRect(0, 0, 800, 600);
-        const nuint style = 1 | 2 | 4 | 8; // Titled | Closable | Miniaturizable | Resizable
+        // Window. macOS points are already logical units, so the options map directly.
+        var frame = new CGRect(0, 0, options.Width, options.Height);
+        nuint style = StyleMask(options);
         IntPtr window = SendPtr(Class("NSWindow"), Sel("alloc"));
         window = SendInitWindow(
             window, Sel("initWithContentRect:styleMask:backing:defer:"),
             frame, style, 2 /* NSBackingStoreBuffered */, false);
-        WithNSString(title, s => SendVoid(window, Sel("setTitle:"), s));
+        WithNSString(options.Title, s => SendVoid(window, Sel("setTitle:"), s));
+
+        // Resize constraints. Cocoa's defaults are (0,0) min and a very large max, so
+        // only the supplied bounds are overridden.
+        if (options.MinWidth is not null || options.MinHeight is not null)
+        {
+            SendVoidSize(window, Sel("setContentMinSize:"),
+                new CGSize(options.MinWidth ?? 0, options.MinHeight ?? 0));
+        }
+        if (options.MaxWidth is not null || options.MaxHeight is not null)
+        {
+            SendVoidSize(window, Sel("setContentMaxSize:"),
+                new CGSize(options.MaxWidth ?? float.MaxValue, options.MaxHeight ?? float.MaxValue));
+        }
+
+        if (options.AlwaysOnTop)
+            SendVoid(window, Sel("setLevel:"), (IntPtr)3 /* NSFloatingWindowLevel */);
 
         // WebView configuration + user content controller.
         IntPtr config = SendPtr(SendPtr(Class("WKWebViewConfiguration"), Sel("alloc")), Sel("init"));
@@ -137,15 +153,36 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
         if (configure is not null)
             BridgeHost.Attach(host, configure, pumpCts.Token);
 
-        // Load content and show.
+        // Load content and position the window.
         WithNSString(html, h => SendVoid(webview, Sel("loadHTMLString:baseURL:"), h, IntPtr.Zero));
-        SendVoid(window, Sel("center"));
-        SendVoid(window, Sel("makeKeyAndOrderFront:"), window);
-        SendVoid(nsApp, Sel("activateIgnoringOtherApps:"), true);
+        if (options.Center)
+            SendVoid(window, Sel("center"));
+        else if (options.X is not null || options.Y is not null)
+            SendVoidPoint(window, Sel("setFrameTopLeftPoint:"), new CGPoint(options.X ?? 0, options.Y ?? 0));
+
+        // Show (or keep hidden), then apply states that require an on-screen window.
+        if (options.Visible)
+        {
+            SendVoid(window, Sel("makeKeyAndOrderFront:"), window);
+            SendVoid(nsApp, Sel("activateIgnoringOtherApps:"), true);
+            if (options.Maximized)
+                SendVoid(window, Sel("zoom:"), IntPtr.Zero);
+            if (options.Fullscreen)
+                SendVoid(window, Sel("toggleFullScreen:"), IntPtr.Zero);
+        }
 
         SendVoid(nsApp, Sel("run"));
         pumpCts.Cancel();
         _current = null;
+    }
+
+    // NSWindowStyleMask: Borderless=0, Titled=1, Closable=2, Miniaturizable=4, Resizable=8.
+    private static nuint StyleMask(WindowOptions options)
+    {
+        nuint style = options.Decorations ? (nuint)(1 | 2 | 4) : 0;
+        if (options.Resizable)
+            style |= 8;
+        return style;
     }
 
     /// <summary>Push a raw UTF-8 message to the webview by invoking the JS dispatch shim.</summary>
@@ -329,6 +366,20 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
         public readonly double Height = height;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly struct CGSize(double width, double height)
+    {
+        public readonly double Width = width;
+        public readonly double Height = height;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly struct CGPoint(double x, double y)
+    {
+        public readonly double X = x;
+        public readonly double Y = y;
+    }
+
     // ---- Objective-C runtime P/Invokes (libobjc is present on macOS and iOS) ----
 
     private const string LibObjC = "/usr/lib/libobjc.A.dylib";
@@ -379,6 +430,12 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
 
     [DllImport(LibObjC, EntryPoint = "objc_msgSend")]
     private static extern void SendVoid(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.I1)] bool arg0);
+
+    [DllImport(LibObjC, EntryPoint = "objc_msgSend")]
+    private static extern void SendVoidSize(IntPtr receiver, IntPtr selector, CGSize size);
+
+    [DllImport(LibObjC, EntryPoint = "objc_msgSend")]
+    private static extern void SendVoidPoint(IntPtr receiver, IntPtr selector, CGPoint point);
 
     [DllImport(LibObjC, EntryPoint = "objc_msgSend")]
     private static extern IntPtr SendInitWindow(
