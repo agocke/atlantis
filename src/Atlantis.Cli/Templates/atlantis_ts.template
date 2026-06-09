@@ -9,23 +9,40 @@ const atlantis = (() => {
   let _callId = 0;
   const _pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   const _subs = new Map<string, Set<(payload: any) => void>>(); // channel -> Set<callback>
+  const _errorHandlers = new Set<(error: Error) => void>(); // global bridge-error listeners
+
+  // Surface a host-level error that isn't tied to a pending call (e.g. the host could
+  // not parse a message we sent). Without this the originating promise would just hang,
+  // leaving the developer with no feedback at all. Notify any registered handlers, or
+  // fall back to console.error so the problem is never swallowed silently.
+  function _surfaceError(message: string): void {
+    const error = new Error(message);
+    if (_errorHandlers.size > 0) _errorHandlers.forEach((cb) => cb(error));
+    else console.error('Atlantis bridge:', message);
+  }
 
   // Receive responses and events from the native host.
   // The host injects window.external.receiveMessage(callback).
   _host.receiveMessage((json: string) => {
     let msg: any;
     try { msg = JSON.parse(json); } catch { return; }
-    if (msg && msg.event === true) {
+    if (!msg) return;
+    if (msg.event === true) {
       const subs = _subs.get(msg.channel);
       if (subs) subs.forEach((cb) => cb(msg.payload));
       return;
     }
-    if (msg && msg.callId !== undefined && _pending.has(msg.callId)) {
-      const { resolve, reject } = _pending.get(msg.callId)!;
+    if (msg.callId !== undefined && msg.callId !== null) {
+      const pending = _pending.get(msg.callId);
+      if (!pending) return;
       _pending.delete(msg.callId);
-      if (msg.error) reject(new Error(msg.error));
-      else resolve(msg.result);
+      if (msg.error) pending.reject(new Error(msg.error));
+      else pending.resolve(msg.result);
+      return;
     }
+    // No callId: an unroutable host-level error. Surface it globally so the developer
+    // gets feedback even though no specific promise can be rejected.
+    if (typeof msg.error === 'string') _surfaceError(msg.error);
   });
 
   function _invoke(method: string, args: any[]): Promise<any> {
@@ -49,8 +66,21 @@ const atlantis = (() => {
     if (subs) subs.delete(callback);
   }
 
+  // Subscribe to host-level bridge errors that aren't tied to a specific call (e.g. the
+  // host could not parse or route a message). Returns an unsubscribe function.
+  function onError(callback: (error: Error) => void): () => void {
+    _errorHandlers.add(callback);
+    return () => offError(callback);
+  }
+
+  function offError(callback: (error: Error) => void): void {
+    _errorHandlers.delete(callback);
+  }
+
 {{Bindings}}  return {
 {{Exports}}    on,
     off,
+    onError,
+    offError,
   };
 })();

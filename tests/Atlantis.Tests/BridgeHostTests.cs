@@ -66,7 +66,7 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Calc.Add", args =>
+            host.Register("Calc.Add", (args, _) =>
             {
                 int sum = args[0].GetInt32() + args[1].GetInt32();
                 return Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes(sum.ToString()));
@@ -87,7 +87,7 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Echo.Concat", args =>
+            host.Register("Echo.Concat", (args, _) =>
             {
                 string joined = args[0].GetString() + args[1].GetString();
                 return Task.FromResult<ReadOnlyMemory<byte>?>(JsonSerializer.SerializeToUtf8Bytes(joined));
@@ -107,7 +107,7 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Logger.Log", _ => Task.FromResult<ReadOnlyMemory<byte>?>(null));
+            host.Register("Logger.Log", (_, _) => Task.FromResult<ReadOnlyMemory<byte>?>(null));
 
             transport.Post("""{"callId":2,"method":"Logger.Log","args":["hi"]}""");
 
@@ -137,7 +137,7 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Boom.Go", _ => throw new InvalidOperationException("kaboom"));
+            host.Register("Boom.Go", (_, _) => throw new InvalidOperationException("kaboom"));
 
             transport.Post("""{"callId":4,"method":"Boom.Go","args":[]}""");
 
@@ -153,8 +153,8 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Calc.Add", _ => Task.FromResult<ReadOnlyMemory<byte>?>("1"u8.ToArray()));
-            host.Register("Calc.Add", _ => Task.FromResult<ReadOnlyMemory<byte>?>("2"u8.ToArray()));
+            host.Register("Calc.Add", (_, _) => Task.FromResult<ReadOnlyMemory<byte>?>("1"u8.ToArray()));
+            host.Register("Calc.Add", (_, _) => Task.FromResult<ReadOnlyMemory<byte>?>("2"u8.ToArray()));
 
             transport.Post("""{"callId":1,"method":"Calc.Add","args":[]}""");
 
@@ -190,19 +190,44 @@ public class BridgeHostTests
     }
 
     [Fact]
-    public async Task Message_without_callId_is_dropped_without_killing_the_pump()
+    public async Task Corrupt_request_still_rejects_the_originating_call_when_callId_is_recoverable()
     {
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Calc.Add", args =>
+            host.Register("Calc.Add", (args, _) =>
                 Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes((args[0].GetInt32() + args[1].GetInt32()).ToString())));
 
-            // A frame with no callId has no caller to answer, so it's dropped - but it
-            // must not take down the pump or the other calls in flight.
-            transport.Post("""{"event":true,"channel":"x"}""");
-            transport.Post("""{"callId":9,"method":"Calc.Add","args":[1,1]}""");
+            // A valid leading callId but a malformed args tail: the structured parse
+            // fails, yet the host recovers the callId so the exact caller is rejected
+            // (correlated), not just told about a global error.
+            transport.Post("""{"callId":11,"method":"Calc.Add","args":[1,2,}""");
 
+            var reply = await NextMessage(transport);
+            Assert.Equal(11, reply.GetProperty("callId").GetInt32());
+            Assert.False(string.IsNullOrEmpty(reply.GetProperty("error").GetString()));
+        }
+    }
+
+    [Fact]
+    public async Task Unroutable_message_without_callId_sends_a_global_error_frame()
+    {
+        var (host, transport, pump) = Start();
+        using (pump)
+        {
+            host.Register("Calc.Add", (args, _) =>
+                Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes((args[0].GetInt32() + args[1].GetInt32()).ToString())));
+
+            // A frame with no callId has no caller to answer, so the host can't reject a
+            // specific promise - but it still sends a callId-less error frame so the
+            // client can surface it globally, and it must not take down the pump.
+            transport.Post("""{"event":true,"channel":"x"}""");
+
+            var err = await NextMessage(transport);
+            Assert.False(err.TryGetProperty("callId", out _));
+            Assert.Contains("no callId", err.GetProperty("error").GetString());
+
+            transport.Post("""{"callId":9,"method":"Calc.Add","args":[1,1]}""");
             var reply = await NextMessage(transport);
             Assert.Equal(9, reply.GetProperty("callId").GetInt32());
             Assert.Equal(2, reply.GetProperty("result").GetInt32());
@@ -210,17 +235,23 @@ public class BridgeHostTests
     }
 
     [Fact]
-    public async Task Malformed_message_is_dropped_without_killing_the_pump()
+    public async Task Malformed_message_sends_a_global_error_frame_without_killing_the_pump()
     {
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Calc.Add", args =>
+            host.Register("Calc.Add", (args, _) =>
                 Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes((args[0].GetInt32() + args[1].GetInt32()).ToString())));
 
+            // Unparseable JSON can't be tied to a callId, but the host still reports the
+            // parse error back to the client instead of swallowing it silently.
             transport.Post("this is not json");
-            transport.Post("""{"callId":10,"method":"Calc.Add","args":[3,4]}""");
 
+            var err = await NextMessage(transport);
+            Assert.False(err.TryGetProperty("callId", out _));
+            Assert.Contains("could not parse", err.GetProperty("error").GetString());
+
+            transport.Post("""{"callId":10,"method":"Calc.Add","args":[3,4]}""");
             var reply = await NextMessage(transport);
             Assert.Equal(10, reply.GetProperty("callId").GetInt32());
             Assert.Equal(7, reply.GetProperty("result").GetInt32());
