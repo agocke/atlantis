@@ -66,10 +66,10 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
     // Outbound messages marshalled onto the UI thread via WM_APP_SEND.
     private static readonly ConcurrentQueue<(string Message, TaskCompletionSource Tcs)> s_sendQueue = new();
 
-    private readonly Channel<byte[]> _incoming =
-        Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly Channel<ReadOnlyMemory<byte>> _incoming =
+        Channel.CreateUnbounded<ReadOnlyMemory<byte>>(new UnboundedChannelOptions { SingleReader = true });
 
-    public Task<byte[]> ReceiveAsync(CancellationToken cancellationToken = default)
+    public Task<ReadOnlyMemory<byte>> ReceiveAsync(CancellationToken cancellationToken = default)
         => _incoming.Reader.ReadAsync(cancellationToken).AsTask();
 
     public static void Run(string title, string html, Action<BridgeHost>? configure)
@@ -145,7 +145,7 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
         return tcs.Task;
     }
 
-    private void OnNativeMessage(byte[] message) => _incoming.Writer.TryWrite(message);
+    private void OnNativeMessage(ReadOnlyMemory<byte> message) => _incoming.Writer.TryWrite(message);
 
     // ---- Win32 window procedure ----
 

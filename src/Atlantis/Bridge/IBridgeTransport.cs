@@ -10,7 +10,7 @@ namespace Atlantis.Bridge;
 internal interface IBridgeTransport
 {
     /// <summary>Await the next UTF-8 message posted by the webview to the host.</summary>
-    Task<byte[]> ReceiveAsync(CancellationToken cancellationToken = default);
+    Task<ReadOnlyMemory<byte>> ReceiveAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Send a UTF-8 message to the webview. The returned task completes once the

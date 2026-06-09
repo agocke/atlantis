@@ -78,10 +78,10 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
     // trampoline (a static native callback) routes incoming messages here.
     private static MacWebViewHost? _current;
 
-    private readonly Channel<byte[]> _incoming =
-        Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly Channel<ReadOnlyMemory<byte>> _incoming =
+        Channel.CreateUnbounded<ReadOnlyMemory<byte>>(new UnboundedChannelOptions { SingleReader = true });
 
-    public Task<byte[]> ReceiveAsync(CancellationToken cancellationToken = default)
+    public Task<ReadOnlyMemory<byte>> ReceiveAsync(CancellationToken cancellationToken = default)
         => _incoming.Reader.ReadAsync(cancellationToken).AsTask();
 
     private MacWebViewHost(IntPtr webview) => _webview = webview;
@@ -192,7 +192,7 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
         return js;
     }
 
-    private void OnNativeMessage(byte[] message) => _incoming.Writer.TryWrite(message);
+    private void OnNativeMessage(ReadOnlyMemory<byte> message) => _incoming.Writer.TryWrite(message);
 
     // ---- Objective-C runtime classes we synthesize once at startup ----
 
