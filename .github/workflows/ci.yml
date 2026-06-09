@@ -46,6 +46,9 @@ jobs:
       - name: Test
         run: dotnet test tests/HelloWorld.Tests/HelloWorld.Tests.csproj -c Release --verbosity normal
 
+      - name: Test Atlantis bridge
+        run: dotnet test tests/Atlantis.Tests/Atlantis.Tests.csproj -c Release --verbosity normal
+
       - name: Publish HelloWorld sample (Native AOT)
         run: dotnet publish samples/HelloWorld/HelloWorld.csproj -c Release -r ${{ matrix.rid }}
 

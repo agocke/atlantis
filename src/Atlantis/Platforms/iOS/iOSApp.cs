@@ -6,9 +6,9 @@ namespace Atlantis.Platforms.iOS;
 /// <summary>
 /// iOS application entry point. Calls into Swift to run the SwiftUI app.
 /// </summary>
-public static partial class iOSApp
+internal static partial class iOSApp
 {
-    public static void Run(string html)
+    internal static void Run(string html)
     {
         atlantis_run(html);
     }

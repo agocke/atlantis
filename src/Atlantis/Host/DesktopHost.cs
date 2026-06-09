@@ -2,6 +2,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text.Json;
+using System.Threading.Channels;
 using Atlantis.Bridge;
 
 namespace Atlantis;
@@ -77,7 +78,11 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
     // trampoline (a static native callback) routes incoming messages here.
     private static MacWebViewHost? _current;
 
-    public event Action<string>? MessageReceived;
+    private readonly Channel<string> _incoming =
+        Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
+
+    public Task<string> ReceiveAsync(CancellationToken cancellationToken = default)
+        => _incoming.Reader.ReadAsync(cancellationToken).AsTask();
 
     private MacWebViewHost(IntPtr webview) => _webview = webview;
 
@@ -128,10 +133,12 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
 
         var host = new MacWebViewHost(webview);
         _current = host;
+        using var pumpCts = new CancellationTokenSource();
         if (configure is not null)
         {
             var bridge = new BridgeHost(host);
             configure(bridge);
+            _ = bridge.RunAsync(pumpCts.Token);
         }
 
         // Load content and show.
@@ -141,22 +148,36 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
         SendVoid(nsApp, Sel("activateIgnoringOtherApps:"), true);
 
         SendVoid(nsApp, Sel("run"));
+        pumpCts.Cancel();
         _current = null;
     }
 
     /// <summary>Push a raw message to the webview by invoking the JS dispatch shim.</summary>
-    public void Send(string message)
+    public Task Send(string message)
     {
         // JsonEncodedText escapes the payload into a safe JS/JSON string literal.
         string literal = "\"" + JsonEncodedText.Encode(message) + "\"";
         string js = "window.__dispatchMessageCallback(" + literal + ")";
 
-        // WKWebView must be touched on the main thread.
-        RunOnMain(() => WithNSString(js, s =>
-            SendVoid(_webview, Sel("evaluateJavaScript:completionHandler:"), s, IntPtr.Zero)));
+        // WKWebView must be touched on the main thread; complete once it has run.
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        RunOnMain(() =>
+        {
+            try
+            {
+                WithNSString(js, s =>
+                    SendVoid(_webview, Sel("evaluateJavaScript:completionHandler:"), s, IntPtr.Zero));
+                tcs.SetResult();
+            }
+            catch (Exception ex)
+            {
+                tcs.SetException(ex);
+            }
+        });
+        return tcs.Task;
     }
 
-    private void OnNativeMessage(string message) => MessageReceived?.Invoke(message);
+    private void OnNativeMessage(string message) => _incoming.Writer.TryWrite(message);
 
     // ---- Objective-C runtime classes we synthesize once at startup ----
 

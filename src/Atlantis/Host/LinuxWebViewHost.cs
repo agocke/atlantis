@@ -2,6 +2,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text.Json;
+using System.Threading.Channels;
 using Atlantis.Bridge;
 
 namespace Atlantis;
@@ -44,7 +45,11 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport
 
     private static LinuxWebViewHost? _current;
 
-    public event Action<string>? MessageReceived;
+    private readonly Channel<string> _incoming =
+        Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
+
+    public Task<string> ReceiveAsync(CancellationToken cancellationToken = default)
+        => _incoming.Reader.ReadAsync(cancellationToken).AsTask();
 
     private LinuxWebViewHost(IntPtr webview) => _webview = webview;
 
@@ -82,32 +87,48 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport
 
         var host = new LinuxWebViewHost(webview);
         _current = host;
+        using var pumpCts = new CancellationTokenSource();
         if (configure is not null)
         {
             var bridge = new BridgeHost(host);
             configure(bridge);
+            _ = bridge.RunAsync(pumpCts.Token);
         }
 
         webkit_web_view_load_html(webview, html, IntPtr.Zero);
         gtk_widget_show_all(window);
 
         gtk_main();
+        pumpCts.Cancel();
         _current = null;
     }
 
     /// <summary>Push a raw message to the webview by invoking the JS dispatch shim.</summary>
-    public void Send(string message)
+    public Task Send(string message)
     {
         string literal = "\"" + JsonEncodedText.Encode(message) + "\"";
         string js = "window.__dispatchMessageCallback(" + literal + ")";
 
-        // WebKitGTK is single-threaded; marshal onto the GTK main loop.
+        // WebKitGTK is single-threaded; marshal onto the GTK main loop and
+        // complete once the dispatch has run there.
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var handle = GCHandle.Alloc((Action)(() =>
-            webkit_web_view_run_javascript(_webview, js, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero)));
+        {
+            try
+            {
+                webkit_web_view_run_javascript(_webview, js, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                tcs.SetResult();
+            }
+            catch (Exception ex)
+            {
+                tcs.SetException(ex);
+            }
+        }));
         g_idle_add((IntPtr)(delegate* unmanaged<IntPtr, int>)&RunIdleAction, GCHandle.ToIntPtr(handle));
+        return tcs.Task;
     }
 
-    private void OnNativeMessage(string message) => MessageReceived?.Invoke(message);
+    private void OnNativeMessage(string message) => _incoming.Writer.TryWrite(message);
 
     // ---- Native callbacks ----
 
