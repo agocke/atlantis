@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Text;
 using System.Text.Json;
 
 namespace Atlantis.Bridge;
@@ -57,8 +59,19 @@ public sealed class BridgeHost
     /// </summary>
     public Task Publish(string channel, string payloadJson)
     {
-        var evt = new BridgeEvent { Channel = channel, Payload = Parse(payloadJson) };
-        return _transport.Send(JsonSerializer.Serialize(evt, BridgeJsonContext.Default.BridgeEvent));
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            writer.WriteBoolean("event", true);
+            writer.WriteString("channel", channel);
+            writer.WritePropertyName("payload");
+            // Embed the already-serialized payload verbatim instead of parsing and
+            // re-serializing it.
+            writer.WriteRawValue(string.IsNullOrEmpty(payloadJson) ? "null" : payloadJson);
+            writer.WriteEndObject();
+        }
+        return _transport.Send(buffer.WrittenMemory);
     }
 
     /// <summary>
@@ -69,7 +82,7 @@ public sealed class BridgeHost
     {
         while (true)
         {
-            string json;
+            byte[] json;
             try
             {
                 json = await _transport.ReceiveAsync(cancellationToken).ConfigureAwait(false);
@@ -85,7 +98,7 @@ public sealed class BridgeHost
         }
     }
 
-    private async Task Handle(string json)
+    private async Task Handle(byte[] json)
     {
         // The only thing that can consume an error on the JS side is a pending call,
         // keyed by callId. So the first job is to recover the callId: every later
@@ -99,7 +112,7 @@ public sealed class BridgeHost
 
         if (request?.CallId is not int callId)
         {
-            Console.Error.WriteLine($"Atlantis bridge: dropping unroutable message: {json}");
+            Console.Error.WriteLine($"Atlantis bridge: dropping unroutable message: {Encoding.UTF8.GetString(json)}");
             return;
         }
 
@@ -127,21 +140,29 @@ public sealed class BridgeHost
 
     private Task SendResult(int callId, string? resultJson)
     {
-        var response = new BridgeResponse { CallId = callId, Result = Parse(resultJson) };
-        return _transport.Send(JsonSerializer.Serialize(response, BridgeJsonContext.Default.BridgeResponse));
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("callId", callId);
+            writer.WritePropertyName("result");
+            // Embed the handler's already-serialized result verbatim (null for void).
+            writer.WriteRawValue(string.IsNullOrEmpty(resultJson) ? "null" : resultJson);
+            writer.WriteEndObject();
+        }
+        return _transport.Send(buffer.WrittenMemory);
     }
 
     private Task SendError(int callId, string message)
     {
-        var error = new BridgeError { CallId = callId, Error = message };
-        return _transport.Send(JsonSerializer.Serialize(error, BridgeJsonContext.Default.BridgeError));
-    }
-
-    // Parse an already-serialized JSON fragment (or null) into a standalone JsonElement
-    // that can be embedded in an envelope. Clone() detaches it from the temporary document.
-    private static JsonElement Parse(string? json)
-    {
-        using var doc = JsonDocument.Parse(string.IsNullOrEmpty(json) ? "null" : json);
-        return doc.RootElement.Clone();
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("callId", callId);
+            writer.WriteString("error", message);
+            writer.WriteEndObject();
+        }
+        return _transport.Send(buffer.WrittenMemory);
     }
 }

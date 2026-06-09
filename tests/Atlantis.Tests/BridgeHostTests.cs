@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using Atlantis.Bridge;
@@ -12,20 +13,21 @@ namespace Atlantis.Tests;
 public class BridgeHostTests
 {
     // In-memory stand-in for a webview: Post() simulates JS -> host messages,
-    // and everything the host sends back lands in Sent for inspection.
+    // and everything the host sends back lands in Sent for inspection. Messages
+    // cross as UTF-8, matching the real transport.
     private sealed class FakeTransport : IBridgeTransport
     {
-        private readonly Channel<string> _inbound = Channel.CreateUnbounded<string>();
-        public Channel<string> Sent { get; } = Channel.CreateUnbounded<string>();
+        private readonly Channel<byte[]> _inbound = Channel.CreateUnbounded<byte[]>();
+        public Channel<byte[]> Sent { get; } = Channel.CreateUnbounded<byte[]>();
 
-        public void Post(string message) => _inbound.Writer.TryWrite(message);
+        public void Post(string message) => _inbound.Writer.TryWrite(Encoding.UTF8.GetBytes(message));
 
-        public Task<string> ReceiveAsync(CancellationToken cancellationToken = default)
+        public Task<byte[]> ReceiveAsync(CancellationToken cancellationToken = default)
             => _inbound.Reader.ReadAsync(cancellationToken).AsTask();
 
-        public Task Send(string message)
+        public Task Send(ReadOnlyMemory<byte> message)
         {
-            Sent.Writer.TryWrite(message);
+            Sent.Writer.TryWrite(message.ToArray());
             return Task.CompletedTask;
         }
     }
@@ -54,7 +56,7 @@ public class BridgeHostTests
     private static async Task<JsonElement> NextMessage(FakeTransport transport)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        string json = await transport.Sent.Reader.ReadAsync(cts.Token);
+        byte[] json = await transport.Sent.Reader.ReadAsync(cts.Token);
         return JsonDocument.Parse(json).RootElement.Clone();
     }
 

@@ -15,38 +15,14 @@ internal sealed class BridgeRequest
     public JsonElement Args { get; set; }
 }
 
-/// <summary>A successful response: <c>{ "callId": n, "result": &lt;json&gt; }</c>.</summary>
-internal sealed class BridgeResponse
-{
-    public int CallId { get; set; }
-    public JsonElement Result { get; set; }
-}
-
-/// <summary>An error response: <c>{ "callId": n, "error": "..." }</c>.</summary>
-internal sealed class BridgeError
-{
-    public int CallId { get; set; }
-    public string Error { get; set; } = "";
-}
-
-/// <summary>A pushed event: <c>{ "event": true, "channel": "...", "payload": &lt;json&gt; }</c>.</summary>
-internal sealed class BridgeEvent
-{
-    public bool Event { get; } = true;
-    public string Channel { get; set; } = "";
-    public JsonElement Payload { get; set; }
-}
-
 /// <summary>
-/// Source-generated (reflection-free) serialization metadata for the bridge wire
-/// envelopes, so the host stays Native AOT safe. The <see cref="JsonElement"/>
-/// members carry already-parsed JSON through verbatim.
+/// Source-generated (reflection-free) deserialization metadata for the inbound bridge
+/// request, so the host stays Native AOT safe. The outbound envelopes (response, error,
+/// event) are written directly with <see cref="System.Text.Json.Utf8JsonWriter"/> so the
+/// already-serialized result/payload can be embedded verbatim.
 /// </summary>
 [JsonSourceGenerationOptions(
     GenerationMode = JsonSourceGenerationMode.Metadata,
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(BridgeRequest))]
-[JsonSerializable(typeof(BridgeResponse))]
-[JsonSerializable(typeof(BridgeError))]
-[JsonSerializable(typeof(BridgeEvent))]
 internal partial class BridgeJsonContext : JsonSerializerContext;

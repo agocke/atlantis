@@ -78,10 +78,10 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
     // trampoline (a static native callback) routes incoming messages here.
     private static MacWebViewHost? _current;
 
-    private readonly Channel<string> _incoming =
-        Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly Channel<byte[]> _incoming =
+        Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
 
-    public Task<string> ReceiveAsync(CancellationToken cancellationToken = default)
+    public Task<byte[]> ReceiveAsync(CancellationToken cancellationToken = default)
         => _incoming.Reader.ReadAsync(cancellationToken).AsTask();
 
     private MacWebViewHost(IntPtr webview) => _webview = webview;
@@ -148,12 +148,13 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
         _current = null;
     }
 
-    /// <summary>Push a raw message to the webview by invoking the JS dispatch shim.</summary>
-    public Task Send(string message)
+    /// <summary>Push a raw UTF-8 message to the webview by invoking the JS dispatch shim.</summary>
+    public Task Send(ReadOnlyMemory<byte> message)
     {
-        // JsonEncodedText escapes the payload into a safe JS/JSON string literal.
-        string literal = "\"" + JsonEncodedText.Encode(message) + "\"";
-        string js = "window.__dispatchMessageCallback(" + literal + ")";
+        // Wrap the UTF-8 envelope as window.__dispatchMessageCallback("<escaped>") and
+        // run it as JS, building the expression in UTF-8 so the payload never round-trips
+        // through a managed UTF-16 string.
+        byte[] js = WrapDispatch(message.Span);
 
         // WKWebView must be touched on the main thread; complete once it has run.
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -161,8 +162,12 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
         {
             try
             {
-                WithNSString(js, s =>
-                    SendVoid(_webview, Sel("evaluateJavaScript:completionHandler:"), s, IntPtr.Zero));
+                fixed (byte* p = js)
+                {
+                    // +[NSString stringWithUTF8String:] copies the NUL-terminated bytes.
+                    IntPtr nsString = SendPtr(Class("NSString"), Sel("stringWithUTF8String:"), (IntPtr)p);
+                    SendVoid(_webview, Sel("evaluateJavaScript:completionHandler:"), nsString, IntPtr.Zero);
+                }
                 tcs.SetResult();
             }
             catch (Exception ex)
@@ -173,7 +178,21 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
         return tcs.Task;
     }
 
-    private void OnNativeMessage(string message) => _incoming.Writer.TryWrite(message);
+    // Build a NUL-terminated UTF-8 JS expression that hands the message to the dispatch
+    // shim. JsonEncodedText escapes the payload into a safe JS/JSON string literal.
+    private static byte[] WrapDispatch(ReadOnlySpan<byte> message)
+    {
+        ReadOnlySpan<byte> prefix = "window.__dispatchMessageCallback(\""u8;
+        ReadOnlySpan<byte> suffix = "\")"u8;
+        ReadOnlySpan<byte> escaped = JsonEncodedText.Encode(message).EncodedUtf8Bytes;
+        var js = new byte[prefix.Length + escaped.Length + suffix.Length + 1]; // +1: NUL
+        prefix.CopyTo(js);
+        escaped.CopyTo(js.AsSpan(prefix.Length));
+        suffix.CopyTo(js.AsSpan(prefix.Length + escaped.Length));
+        return js;
+    }
+
+    private void OnNativeMessage(byte[] message) => _incoming.Writer.TryWrite(message);
 
     // ---- Objective-C runtime classes we synthesize once at startup ----
 
@@ -239,10 +258,10 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
     {
         IntPtr body = SendPtr(message, Sel("body"));
         IntPtr utf8 = SendPtr(body, Sel("UTF8String"));
-        string? text = Marshal.PtrToStringUTF8(utf8);
-        if (text is not null)
+        if (utf8 != IntPtr.Zero)
         {
-            _current?.OnNativeMessage(text);
+            byte[] bytes = MemoryMarshal.CreateReadOnlySpanFromNullTerminated((byte*)utf8).ToArray();
+            _current?.OnNativeMessage(bytes);
         }
     }
 

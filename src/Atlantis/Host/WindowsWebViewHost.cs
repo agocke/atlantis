@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text;
 using System.Threading.Channels;
 using Atlantis.Bridge;
 
@@ -65,10 +66,10 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
     // Outbound messages marshalled onto the UI thread via WM_APP_SEND.
     private static readonly ConcurrentQueue<(string Message, TaskCompletionSource Tcs)> s_sendQueue = new();
 
-    private readonly Channel<string> _incoming =
-        Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly Channel<byte[]> _incoming =
+        Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
 
-    public Task<string> ReceiveAsync(CancellationToken cancellationToken = default)
+    public Task<byte[]> ReceiveAsync(CancellationToken cancellationToken = default)
         => _incoming.Reader.ReadAsync(cancellationToken).AsTask();
 
     public static void Run(string title, string html, Action<BridgeHost>? configure)
@@ -132,18 +133,19 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
         _current = null;
     }
 
-    /// <summary>Push a raw message to the webview via WebView2's PostWebMessageAsString.</summary>
-    public Task Send(string message)
+    /// <summary>Push a raw UTF-8 message to the webview via WebView2's PostWebMessageAsString.</summary>
+    public Task Send(ReadOnlyMemory<byte> message)
     {
-        // WebView2 is thread-affine; hand off to the UI thread's message loop and
-        // complete once the message has been posted there.
+        // WebView2's message API is UTF-16 (LPCWSTR) only, so decode the UTF-8 envelope to
+        // a string here - the one transcode the platform forces. WebView2 is thread-affine;
+        // hand off to the UI thread's message loop and complete once it has been posted.
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        s_sendQueue.Enqueue((message, tcs));
+        s_sendQueue.Enqueue((Encoding.UTF8.GetString(message.Span), tcs));
         PostMessageW(_hwnd, WM_APP_SEND, UIntPtr.Zero, IntPtr.Zero);
         return tcs.Task;
     }
 
-    private void OnNativeMessage(string message) => _incoming.Writer.TryWrite(message);
+    private void OnNativeMessage(byte[] message) => _incoming.Writer.TryWrite(message);
 
     // ---- Win32 window procedure ----
 
@@ -266,7 +268,7 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
         Marshal.FreeCoTaskMem(strPtr); // ownership transfers to the caller
         if (text is not null)
         {
-            _current?.OnNativeMessage(text);
+            _current?.OnNativeMessage(Encoding.UTF8.GetBytes(text));
         }
 
         return 0;

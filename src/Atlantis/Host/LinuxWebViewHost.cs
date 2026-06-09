@@ -45,10 +45,10 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport
 
     private static LinuxWebViewHost? _current;
 
-    private readonly Channel<string> _incoming =
-        Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly Channel<byte[]> _incoming =
+        Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
 
-    public Task<string> ReceiveAsync(CancellationToken cancellationToken = default)
+    public Task<byte[]> ReceiveAsync(CancellationToken cancellationToken = default)
         => _incoming.Reader.ReadAsync(cancellationToken).AsTask();
 
     private LinuxWebViewHost(IntPtr webview) => _webview = webview;
@@ -99,11 +99,12 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport
         _current = null;
     }
 
-    /// <summary>Push a raw message to the webview by invoking the JS dispatch shim.</summary>
-    public Task Send(string message)
+    /// <summary>Push a raw UTF-8 message to the webview by invoking the JS dispatch shim.</summary>
+    public Task Send(ReadOnlyMemory<byte> message)
     {
-        string literal = "\"" + JsonEncodedText.Encode(message) + "\"";
-        string js = "window.__dispatchMessageCallback(" + literal + ")";
+        // Wrap the UTF-8 envelope as window.__dispatchMessageCallback("<escaped>"); WebKitGTK
+        // is UTF-8 native, so the bytes go straight to run_javascript with no transcoding.
+        byte[] js = WrapDispatch(message.Span);
 
         // WebKitGTK is single-threaded; marshal onto the GTK main loop and
         // complete once the dispatch has run there.
@@ -124,7 +125,21 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport
         return tcs.Task;
     }
 
-    private void OnNativeMessage(string message) => _incoming.Writer.TryWrite(message);
+    // Build a NUL-terminated UTF-8 JS expression that hands the message to the dispatch
+    // shim. JsonEncodedText escapes the payload into a safe JS/JSON string literal.
+    private static byte[] WrapDispatch(ReadOnlySpan<byte> message)
+    {
+        ReadOnlySpan<byte> prefix = "window.__dispatchMessageCallback(\""u8;
+        ReadOnlySpan<byte> suffix = "\")"u8;
+        ReadOnlySpan<byte> escaped = JsonEncodedText.Encode(message).EncodedUtf8Bytes;
+        var js = new byte[prefix.Length + escaped.Length + suffix.Length + 1]; // +1: NUL
+        prefix.CopyTo(js);
+        escaped.CopyTo(js.AsSpan(prefix.Length));
+        suffix.CopyTo(js.AsSpan(prefix.Length + escaped.Length));
+        return js;
+    }
+
+    private void OnNativeMessage(byte[] message) => _incoming.Writer.TryWrite(message);
 
     // ---- Native callbacks ----
 
@@ -138,12 +153,12 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport
         if (jsc_value_is_string(jsValue) != 0)
         {
             IntPtr utf8 = jsc_value_to_string(jsValue);
-            string? text = Marshal.PtrToStringUTF8(utf8);
-            g_free(utf8);
-            if (text is not null)
+            if (utf8 != IntPtr.Zero)
             {
-                _current?.OnNativeMessage(text);
+                byte[] bytes = MemoryMarshal.CreateReadOnlySpanFromNullTerminated((byte*)utf8).ToArray();
+                _current?.OnNativeMessage(bytes);
             }
+            g_free(utf8);
         }
 
         webkit_javascript_result_unref(jsResult);
@@ -224,8 +239,8 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport
     [DllImport(WebKit, CharSet = CharSet.Ansi)]
     private static extern void webkit_web_view_load_html(IntPtr webView, string content, IntPtr baseUri);
 
-    [DllImport(WebKit, CharSet = CharSet.Ansi)]
-    private static extern void webkit_web_view_run_javascript(IntPtr webView, string script, IntPtr cancellable, IntPtr callback, IntPtr userData);
+    [DllImport(WebKit)]
+    private static extern void webkit_web_view_run_javascript(IntPtr webView, byte[] script, IntPtr cancellable, IntPtr callback, IntPtr userData);
 
     [DllImport(WebKit)] private static extern IntPtr webkit_javascript_result_get_js_value(IntPtr jsResult);
     [DllImport(WebKit)] private static extern void webkit_javascript_result_unref(IntPtr jsResult);
