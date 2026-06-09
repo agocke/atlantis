@@ -177,26 +177,40 @@ public class BridgeHostTests
     }
 
     [Fact]
-    public async Task Message_without_callId_faults_the_pump()
+    public async Task Message_without_callId_is_dropped_without_killing_the_pump()
     {
-        var transport = new FakeTransport();
-        var host = new BridgeHost(transport);
+        var (host, transport, pump) = Start();
+        using (pump)
+        {
+            host.Register("Calc", "Add", args =>
+                Task.FromResult<string?>((args[0].GetInt32() + args[1].GetInt32()).ToString()));
 
-        // A message with no callId is a protocol violation; the pump must fail, not ignore it.
-        transport.Post("""{"event":true,"channel":"x"}""");
+            // A frame with no callId has no caller to answer, so it's dropped - but it
+            // must not take down the pump or the other calls in flight.
+            transport.Post("""{"event":true,"channel":"x"}""");
+            transport.Post("""{"callId":9,"className":"Calc","methodName":"Add","args":[1,1]}""");
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => host.RunAsync());
-        Assert.Contains("callId", ex.Message);
+            var reply = await NextMessage(transport);
+            Assert.Equal(9, reply.GetProperty("callId").GetInt32());
+            Assert.Equal(2, reply.GetProperty("result").GetInt32());
+        }
     }
 
     [Fact]
-    public async Task Malformed_message_faults_the_pump()
+    public async Task Malformed_message_is_dropped_without_killing_the_pump()
     {
-        var transport = new FakeTransport();
-        var host = new BridgeHost(transport);
+        var (host, transport, pump) = Start();
+        using (pump)
+        {
+            host.Register("Calc", "Add", args =>
+                Task.FromResult<string?>((args[0].GetInt32() + args[1].GetInt32()).ToString()));
 
-        transport.Post("this is not json");
+            transport.Post("this is not json");
+            transport.Post("""{"callId":10,"className":"Calc","methodName":"Add","args":[3,4]}""");
 
-        await Assert.ThrowsAsync<JsonException>(() => host.RunAsync());
+            var reply = await NextMessage(transport);
+            Assert.Equal(10, reply.GetProperty("callId").GetInt32());
+            Assert.Equal(7, reply.GetProperty("result").GetInt32());
+        }
     }
 }

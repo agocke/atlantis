@@ -35,17 +35,13 @@ public sealed class BridgeHost
     /// <summary>
     /// Attach a bridge to <paramref name="transport"/>, let the app register its
     /// handlers via <paramref name="configure"/>, and start pumping messages until
-    /// <paramref name="cancellationToken"/> is signalled. A pump failure means the
-    /// wire channel is corrupt and unrecoverable, so it fails fast rather than
-    /// leaving the app running with a half-dead bridge.
+    /// <paramref name="cancellationToken"/> is signalled.
     /// </summary>
     internal static void Attach(IBridgeTransport transport, Action<BridgeHost> configure, CancellationToken cancellationToken)
     {
         var bridge = new BridgeHost(transport);
         configure(bridge);
-        _ = bridge.RunAsync(cancellationToken).ContinueWith(
-            t => Environment.FailFast("Atlantis bridge pump failed.", t.Exception),
-            TaskContinuationOptions.OnlyOnFaulted);
+        _ = bridge.RunAsync(cancellationToken);
     }
 
     /// <summary>Register a handler for <c>className.methodName</c>.</summary>
@@ -80,22 +76,30 @@ public sealed class BridgeHost
                 break;
             }
 
-            // Parse the envelope here, on the pump, so a malformed message or one with
-            // no callId faults RunAsync loudly instead of being silently dropped: it
-            // means the wire client is broken and the channel can't be trusted.
-            var request = JsonSerializer.Deserialize(json, BridgeJsonContext.Default.BridgeRequest)
-                ?? throw new InvalidOperationException($"Bridge received a null message: {json}");
-            if (request.CallId is not int callId)
-                throw new InvalidOperationException($"Bridge received a message without a callId: {json}");
-
-            // Dispatch concurrently so a slow handler doesn't stall other calls. A
-            // handler failure is reported to its own caller, so this task never faults.
-            _ = Dispatch(callId, request);
+            // Handle each message independently and concurrently so one slow or bad
+            // call can't stall the others. Handle never throws.
+            _ = Handle(json);
         }
     }
 
-    private async Task Dispatch(int callId, BridgeRequest request)
+    private async Task Handle(string json)
     {
+        // The only thing that can consume an error on the JS side is a pending call,
+        // keyed by callId. So the first job is to recover the callId: every later
+        // failure is then reported back to that caller. A message we can't pin to a
+        // callId has nowhere to go - our own client always sends one, so this means
+        // the client is broken or someone else is posting. Surface it and move on;
+        // we can't answer a caller that doesn't exist, and the other calls are fine.
+        BridgeRequest? request = null;
+        try { request = JsonSerializer.Deserialize(json, BridgeJsonContext.Default.BridgeRequest); }
+        catch (JsonException) { }
+
+        if (request?.CallId is not int callId)
+        {
+            Console.Error.WriteLine($"Atlantis bridge: dropping unroutable message: {json}");
+            return;
+        }
+
         try
         {
             var className = request.ClassName ?? "";
@@ -112,8 +116,8 @@ public sealed class BridgeHost
         }
         catch (Exception ex)
         {
-            // The handler failed; report it to its caller. The channel is still healthy,
-            // so this is recoverable. Best-effort: if the transport is gone, give up.
+            // The call failed; reject its caller's promise. The channel is healthy, so
+            // this is recoverable. Best-effort: if the transport is gone, give up.
             try { await SendError(callId, ex.Message).ConfigureAwait(false); }
             catch { }
         }
