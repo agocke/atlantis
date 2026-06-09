@@ -135,11 +135,7 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
         _current = host;
         using var pumpCts = new CancellationTokenSource();
         if (configure is not null)
-        {
-            var bridge = new BridgeHost(host);
-            configure(bridge);
-            _ = bridge.RunAsync(pumpCts.Token);
-        }
+            BridgeHost.Attach(host, configure, pumpCts.Token);
 
         // Load content and show.
         WithNSString(html, h => SendVoid(webview, Sel("loadHTMLString:baseURL:"), h, IntPtr.Zero));

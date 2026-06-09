@@ -89,11 +89,7 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport
         _current = host;
         using var pumpCts = new CancellationTokenSource();
         if (configure is not null)
-        {
-            var bridge = new BridgeHost(host);
-            configure(bridge);
-            _ = bridge.RunAsync(pumpCts.Token);
-        }
+            BridgeHost.Attach(host, configure, pumpCts.Token);
 
         webkit_web_view_load_html(webview, html, IntPtr.Zero);
         gtk_widget_show_all(window);

@@ -177,22 +177,26 @@ public class BridgeHostTests
     }
 
     [Fact]
-    public async Task Non_request_message_is_ignored()
+    public async Task Message_without_callId_faults_the_pump()
     {
-        var (host, transport, pump) = Start();
-        using (pump)
-        {
-            host.Register("Calc", "Add", args =>
-                Task.FromResult<string?>((args[0].GetInt32() + args[1].GetInt32()).ToString()));
+        var transport = new FakeTransport();
+        var host = new BridgeHost(transport);
 
-            // A message with no callId must be dropped, not answered.
-            transport.Post("""{"event":true,"channel":"x"}""");
-            transport.Post("""{"callId":9,"className":"Calc","methodName":"Add","args":[1,1]}""");
+        // A message with no callId is a protocol violation; the pump must fail, not ignore it.
+        transport.Post("""{"event":true,"channel":"x"}""");
 
-            // The first reply we see must be for the real request, proving the first was ignored.
-            var reply = await NextMessage(transport);
-            Assert.Equal(9, reply.GetProperty("callId").GetInt32());
-            Assert.Equal(2, reply.GetProperty("result").GetInt32());
-        }
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => host.RunAsync());
+        Assert.Contains("callId", ex.Message);
+    }
+
+    [Fact]
+    public async Task Malformed_message_faults_the_pump()
+    {
+        var transport = new FakeTransport();
+        var host = new BridgeHost(transport);
+
+        transport.Post("this is not json");
+
+        await Assert.ThrowsAsync<JsonException>(() => host.RunAsync());
     }
 }
