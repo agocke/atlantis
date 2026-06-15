@@ -38,14 +38,16 @@ public sealed class BridgeHost
     }
 
     /// <summary>
-    /// Attach a bridge to <paramref name="transport"/>, let the app register its
-    /// handlers via <paramref name="configure"/>, and start pumping messages until
+    /// Attach a bridge to <paramref name="transport"/>, register the built-in
+    /// <c>Atlantis.*</c> handlers, let the app register its own handlers via the optional
+    /// <paramref name="configure"/>, and start pumping messages until
     /// <paramref name="cancellationToken"/> is signalled.
     /// </summary>
-    internal static void Attach(IBridgeTransport transport, Action<BridgeHost> configure, CancellationToken cancellationToken)
+    internal static void Attach(IBridgeTransport transport, Action<BridgeHost>? configure, CancellationToken cancellationToken)
     {
         var bridge = new BridgeHost(transport);
-        configure(bridge);
+        Dialog.RegisterBridge(bridge);
+        configure?.Invoke(bridge);
         _ = bridge.RunAsync(cancellationToken);
     }
 

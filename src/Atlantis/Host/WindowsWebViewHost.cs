@@ -29,7 +29,7 @@ namespace Atlantis;
 /// SDK header (WebView2.h, Microsoft.Web.WebView2).
 /// </remarks>
 [SupportedOSPlatform("windows")]
-internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
+internal sealed unsafe class WindowsWebViewHost : IBridgeTransport, IFileDialogProvider
 {
     // Bridge init script. Windows uses the chrome.webview transport rather than the
     // WKWebView/WebKitGTK postMessage shape, but exposes the same window.external API
@@ -66,6 +66,9 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
     // Outbound messages marshalled onto the UI thread via WM_APP_SEND.
     private static readonly ConcurrentQueue<(string Message, TaskCompletionSource Tcs)> s_sendQueue = new();
 
+    // Arbitrary work (e.g. showing a modal file dialog) marshalled onto the UI thread.
+    private static readonly ConcurrentQueue<Action> s_invokeQueue = new();
+
     private readonly Channel<ReadOnlyMemory<byte>> _incoming =
         Channel.CreateUnbounded<ReadOnlyMemory<byte>>(new UnboundedChannelOptions { SingleReader = true });
 
@@ -98,9 +101,9 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
 
         var host = new WindowsWebViewHost();
         _current = host;
+        Dialog.Provider = host;
         using var pumpCts = new CancellationTokenSource();
-        if (configure is not null)
-            BridgeHost.Attach(host, configure, pumpCts.Token);
+        BridgeHost.Attach(host, configure, pumpCts.Token);
 
         ShowWindow(_hwnd, 5 /* SW_SHOW */);
         UpdateWindow(_hwnd);
@@ -130,7 +133,180 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
         }
 
         pumpCts.Cancel();
+        Dialog.Provider = null;
         _current = null;
+    }
+
+    /// <summary>
+    /// Show an IFileOpenDialog for files or folders and return the selected paths. The
+    /// dialog is shown on the UI thread; the calling (worker) thread blocks until it closes.
+    /// </summary>
+    public string[] ShowOpen(OpenDialogOptions options)
+    {
+        string[] result = [];
+        using var done = new ManualResetEventSlim(false);
+        s_invokeQueue.Enqueue(() =>
+        {
+            try { result = ShowOpenOnUi(options); }
+            finally { done.Set(); }
+        });
+        PostMessageW(_hwnd, WM_APP_INVOKE, UIntPtr.Zero, IntPtr.Zero);
+        done.Wait();
+        return result;
+    }
+
+    private static string[] ShowOpenOnUi(OpenDialogOptions options)
+    {
+        // The UI thread hosts WebView2 (STA); make sure COM is initialized for it. A second
+        // call is harmless (returns S_FALSE), so the result is intentionally ignored.
+        CoInitializeEx(IntPtr.Zero, 2 /* COINIT_APARTMENTTHREADED */);
+
+        Guid clsid = CLSID_FileOpenDialog;
+        Guid iid = IID_IFileOpenDialog;
+        if (CoCreateInstance(ref clsid, IntPtr.Zero, 1 /* CLSCTX_INPROC_SERVER */, ref iid, out IntPtr dialog) < 0
+            || dialog == IntPtr.Zero)
+        {
+            return [];
+        }
+
+        try
+        {
+            // IFileDialog::GetOptions(out) — slot 10; SetOptions — slot 9.
+            uint opts;
+            var getOptions = (delegate* unmanaged<IntPtr, uint*, int>)Vtbl(dialog, 10);
+            getOptions(dialog, &opts);
+            opts |= FOS_FORCEFILESYSTEM;
+            if (options.Directories) opts |= FOS_PICKFOLDERS;
+            if (options.AllowMultiple) opts |= FOS_ALLOWMULTISELECT;
+            var setOptions = (delegate* unmanaged<IntPtr, uint, int>)Vtbl(dialog, 9);
+            setOptions(dialog, opts);
+
+            if (!string.IsNullOrEmpty(options.Title))
+            {
+                CallString(dialog, 17 /* IFileDialog::SetTitle */, options.Title);
+            }
+            if (!string.IsNullOrEmpty(options.InitialDirectory) && Directory.Exists(options.InitialDirectory))
+            {
+                TrySetFolder(dialog, options.InitialDirectory);
+            }
+
+            // IModalWindow::Show(HWND) — slot 3. A non-zero (negative) HRESULT means the
+            // user cancelled (HRESULT_FROM_WIN32(ERROR_CANCELLED)) or the call failed.
+            var show = (delegate* unmanaged<IntPtr, IntPtr, int>)Vtbl(dialog, 3);
+            if (show(dialog, _hwnd) < 0)
+            {
+                return [];
+            }
+
+            return options.AllowMultiple ? GetResults(dialog) : GetSingleResult(dialog);
+        }
+        finally
+        {
+            Release(dialog);
+        }
+    }
+
+    private static string[] GetSingleResult(IntPtr dialog)
+    {
+        // IFileDialog::GetResult(out IShellItem) — slot 20.
+        IntPtr item;
+        var getResult = (delegate* unmanaged<IntPtr, IntPtr*, int>)Vtbl(dialog, 20);
+        if (getResult(dialog, &item) < 0 || item == IntPtr.Zero)
+        {
+            return [];
+        }
+        try
+        {
+            string? path = GetItemPath(item);
+            return path is null ? [] : [path];
+        }
+        finally
+        {
+            Release(item);
+        }
+    }
+
+    private static string[] GetResults(IntPtr dialog)
+    {
+        // IFileOpenDialog::GetResults(out IShellItemArray) — slot 27.
+        IntPtr array;
+        var getResults = (delegate* unmanaged<IntPtr, IntPtr*, int>)Vtbl(dialog, 27);
+        if (getResults(dialog, &array) < 0 || array == IntPtr.Zero)
+        {
+            return [];
+        }
+        try
+        {
+            // IShellItemArray::GetCount(out DWORD) — slot 7; GetItemAt(DWORD, out) — slot 8.
+            uint count;
+            var getCount = (delegate* unmanaged<IntPtr, uint*, int>)Vtbl(array, 7);
+            getCount(array, &count);
+
+            var paths = new List<string>((int)count);
+            var getItemAt = (delegate* unmanaged<IntPtr, uint, IntPtr*, int>)Vtbl(array, 8);
+            for (uint i = 0; i < count; i++)
+            {
+                IntPtr item;
+                if (getItemAt(array, i, &item) < 0 || item == IntPtr.Zero)
+                {
+                    continue;
+                }
+                try
+                {
+                    string? path = GetItemPath(item);
+                    if (path is not null) paths.Add(path);
+                }
+                finally
+                {
+                    Release(item);
+                }
+            }
+            return paths.ToArray();
+        }
+        finally
+        {
+            Release(array);
+        }
+    }
+
+    private static string? GetItemPath(IntPtr item)
+    {
+        // IShellItem::GetDisplayName(SIGDN_FILESYSPATH, out LPWSTR) — slot 5.
+        IntPtr str;
+        var getName = (delegate* unmanaged<IntPtr, uint, IntPtr*, int>)Vtbl(item, 5);
+        if (getName(item, SIGDN_FILESYSPATH, &str) < 0 || str == IntPtr.Zero)
+        {
+            return null;
+        }
+        string? path = Marshal.PtrToStringUni(str);
+        Marshal.FreeCoTaskMem(str); // GetDisplayName allocates with CoTaskMemAlloc
+        return path;
+    }
+
+    private static void TrySetFolder(IntPtr dialog, string folder)
+    {
+        Guid iid = IID_IShellItem;
+        if (SHCreateItemFromParsingName(folder, IntPtr.Zero, ref iid, out IntPtr item) < 0 || item == IntPtr.Zero)
+        {
+            return;
+        }
+        try
+        {
+            // IFileDialog::SetFolder(IShellItem) — slot 12.
+            var setFolder = (delegate* unmanaged<IntPtr, IntPtr, int>)Vtbl(dialog, 12);
+            setFolder(dialog, item);
+        }
+        finally
+        {
+            Release(item);
+        }
+    }
+
+    /// <summary>Invoke IUnknown::Release (vtable slot 2) on a COM object.</summary>
+    private static void Release(IntPtr comObject)
+    {
+        var release = (delegate* unmanaged<IntPtr, uint>)Vtbl(comObject, 2);
+        release(comObject);
     }
 
     /// <summary>Push a raw UTF-8 message to the webview via WebView2's PostWebMessageAsString.</summary>
@@ -152,6 +328,7 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
     private const uint WM_DESTROY = 0x0002;
     private const uint WM_SIZE = 0x0005;
     private const uint WM_APP_SEND = 0x8000; // WM_APP
+    private const uint WM_APP_INVOKE = 0x8001; // WM_APP + 1
 
     [UnmanagedCallersOnly]
     private static IntPtr WndProc(IntPtr hwnd, uint msg, UIntPtr wParam, IntPtr lParam)
@@ -182,6 +359,13 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
                             item.Tcs.SetException(ex);
                         }
                     }
+                }
+                return IntPtr.Zero;
+
+            case WM_APP_INVOKE:
+                while (s_invokeQueue.TryDequeue(out var work))
+                {
+                    work();
                 }
                 return IntPtr.Zero;
 
@@ -365,6 +549,26 @@ internal sealed unsafe class WindowsWebViewHost : IBridgeTransport
     [DllImport("WebView2Loader.dll", CharSet = CharSet.Unicode)]
     private static extern int CreateCoreWebView2EnvironmentWithOptions(
         IntPtr browserExecutableFolder, IntPtr userDataFolder, IntPtr environmentOptions, IntPtr handler);
+
+    // ---- Common Item Dialog (IFileOpenDialog) for the open file/folder dialogs ----
+
+    private static readonly Guid CLSID_FileOpenDialog = new("DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7");
+    private static readonly Guid IID_IFileOpenDialog = new("D57C7288-D4AD-4768-BE02-9D969532D960");
+    private static readonly Guid IID_IShellItem = new("43826D1E-E718-42EE-BC55-A1E261C37BFE");
+
+    private const uint SIGDN_FILESYSPATH = 0x80058000;
+    private const uint FOS_PICKFOLDERS = 0x20;
+    private const uint FOS_FORCEFILESYSTEM = 0x40;
+    private const uint FOS_ALLOWMULTISELECT = 0x200;
+
+    [DllImport("ole32")]
+    private static extern int CoInitializeEx(IntPtr reserved, uint coInit);
+
+    [DllImport("ole32")]
+    private static extern int CoCreateInstance(ref Guid rclsid, IntPtr outer, uint clsContext, ref Guid riid, out IntPtr ppv);
+
+    [DllImport("shell32", CharSet = CharSet.Unicode)]
+    private static extern int SHCreateItemFromParsingName(string path, IntPtr bindCtx, ref Guid riid, out IntPtr item);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct WNDCLASSEXW

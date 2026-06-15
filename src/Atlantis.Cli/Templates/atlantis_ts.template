@@ -77,8 +77,21 @@ const atlantis = (() => {
     _errorHandlers.delete(callback);
   }
 
+  // Built-in native dialogs, provided by the Atlantis host (not generated from
+  // [AtlExport]). Each returns the chosen filesystem path(s); openFile/openFolder
+  // resolve to null when the user cancels, openFiles to an empty array.
+  const dialog = {
+    openFile: (title?: string): Promise<string | null> =>
+      _invoke('Atlantis.Dialog.OpenFile', title === undefined ? [] : [title]),
+    openFiles: (title?: string): Promise<string[]> =>
+      _invoke('Atlantis.Dialog.OpenFiles', title === undefined ? [] : [title]),
+    openFolder: (title?: string): Promise<string | null> =>
+      _invoke('Atlantis.Dialog.OpenFolder', title === undefined ? [] : [title]),
+  };
+
 {{Bindings}}  return {
-{{Exports}}    on,
+{{Exports}}    dialog,
+    on,
     off,
     onError,
     offError,
