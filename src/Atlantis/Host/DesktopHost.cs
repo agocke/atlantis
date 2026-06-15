@@ -48,7 +48,7 @@ internal static class DesktopHost
 /// MIT-licensed. Credit: Photino (https://github.com/tryphotino/photino.Native).
 /// </remarks>
 [SupportedOSPlatform("macos")]
-internal sealed unsafe class MacWebViewHost : IBridgeTransport
+internal sealed unsafe class MacWebViewHost : IBridgeTransport, IFileDialogProvider
 {
     // Name of the WKScriptMessageHandler the bridge posts to. JavaScript reaches it
     // via window.webkit.messageHandlers.<name>.postMessage (see InitScript).
@@ -133,9 +133,9 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
 
         var host = new MacWebViewHost(webview);
         _current = host;
+        Dialog.Provider = host;
         using var pumpCts = new CancellationTokenSource();
-        if (configure is not null)
-            BridgeHost.Attach(host, configure, pumpCts.Token);
+        BridgeHost.Attach(host, configure, pumpCts.Token);
 
         // Load content and show.
         WithNSString(html, h => SendVoid(webview, Sel("loadHTMLString:baseURL:"), h, IntPtr.Zero));
@@ -145,7 +145,64 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
 
         SendVoid(nsApp, Sel("run"));
         pumpCts.Cancel();
+        Dialog.Provider = null;
         _current = null;
+    }
+
+    /// <summary>
+    /// Show an NSOpenPanel for files or folders and return the selected paths. The panel
+    /// must run on the main thread; the calling (worker) thread blocks until it closes.
+    /// </summary>
+    public string[] ShowOpen(OpenDialogOptions options)
+    {
+        string[] result = [];
+        using var done = new ManualResetEventSlim(false);
+        RunOnMain(() =>
+        {
+            try { result = ShowOpenOnMain(options); }
+            finally { done.Set(); }
+        });
+        done.Wait();
+        return result;
+    }
+
+    private static string[] ShowOpenOnMain(OpenDialogOptions options)
+    {
+        IntPtr panel = SendPtr(Class("NSOpenPanel"), Sel("openPanel"));
+        SendVoid(panel, Sel("setCanChooseFiles:"), !options.Directories);
+        SendVoid(panel, Sel("setCanChooseDirectories:"), options.Directories);
+        SendVoid(panel, Sel("setAllowsMultipleSelection:"), options.AllowMultiple);
+
+        if (!string.IsNullOrEmpty(options.Title))
+        {
+            WithNSString(options.Title, s => SendVoid(panel, Sel("setMessage:"), s));
+        }
+        if (!string.IsNullOrEmpty(options.InitialDirectory))
+        {
+            WithNSString(options.InitialDirectory, p =>
+            {
+                IntPtr url = SendPtr(Class("NSURL"), Sel("fileURLWithPath:"), p);
+                SendVoid(panel, Sel("setDirectoryURL:"), url);
+            });
+        }
+
+        // NSModalResponseOK == 1; anything else (e.g. cancel) yields no selection.
+        if (SendNInt(panel, Sel("runModal")) != 1)
+        {
+            return [];
+        }
+
+        IntPtr urls = SendPtr(panel, Sel("URLs"));
+        long count = (long)SendPtr(urls, Sel("count"));
+        var paths = new string[count];
+        for (long i = 0; i < count; i++)
+        {
+            IntPtr url = SendPtrIndex(urls, Sel("objectAtIndex:"), (nuint)i);
+            IntPtr nsPath = SendPtr(url, Sel("path"));
+            IntPtr utf8 = SendPtr(nsPath, Sel("UTF8String"));
+            paths[i] = utf8 != IntPtr.Zero ? Marshal.PtrToStringUTF8(utf8) ?? "" : "";
+        }
+        return paths;
     }
 
     /// <summary>Push a raw UTF-8 message to the webview by invoking the JS dispatch shim.</summary>
@@ -367,6 +424,12 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport
 
     [DllImport(LibObjC, EntryPoint = "objc_msgSend")]
     private static extern IntPtr SendPtr(IntPtr receiver, IntPtr selector, IntPtr arg0);
+
+    [DllImport(LibObjC, EntryPoint = "objc_msgSend")]
+    private static extern IntPtr SendPtrIndex(IntPtr receiver, IntPtr selector, nuint arg0);
+
+    [DllImport(LibObjC, EntryPoint = "objc_msgSend")]
+    private static extern nint SendNInt(IntPtr receiver, IntPtr selector);
 
     [DllImport(LibObjC, EntryPoint = "objc_msgSend")]
     private static extern void SendVoid(IntPtr receiver, IntPtr selector);

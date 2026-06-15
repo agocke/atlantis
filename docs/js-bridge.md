@@ -122,6 +122,47 @@ const files = await atlantis.Api.ListFiles('/docs');       // async, ~ms
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+## Built-in Dialogs
+
+Atlantis ships a built-in native open file/folder dialog, available without declaring any
+`[AtlExport]` method. It is exposed both to C# host code and to JavaScript.
+
+### From C#
+
+```csharp
+using Atlantis;
+
+string? file    = Dialog.OpenFile("Pick a file");           // single file, or null
+var     files   = Dialog.OpenFiles("Pick files");            // zero or more files
+string? folder  = Dialog.OpenFolder("Pick a folder");        // single folder, or null
+
+// Full control:
+var picked = Dialog.ShowOpen(new OpenDialogOptions
+{
+    Title = "Select images",
+    AllowMultiple = true,
+    Directories = false,
+    InitialDirectory = "/Users/me/Pictures",
+});
+```
+
+Each call blocks until the user dismisses the dialog and returns the selected filesystem
+path(s). A dialog requires a running desktop window (`AtlantisApp.Run`); calling it
+otherwise throws `InvalidOperationException`. Backed by `NSOpenPanel` (macOS),
+`IFileOpenDialog` (Windows) and `GtkFileChooserNative` (Linux).
+
+### From JavaScript
+
+```javascript
+const file   = await atlantis.dialog.openFile('Pick a file');     // string | null
+const files  = await atlantis.dialog.openFiles('Pick files');     // string[]
+const folder = await atlantis.dialog.openFolder('Pick a folder'); // string | null
+```
+
+The `dialog` namespace is always present on the generated `atlantis` object (no
+`[AtlExport]` required), so `atl bindgen` emits the bridge even for a project with no
+exported methods.
+
 ## Serialization
 
 Communication uses [MessagePack](https://msgpack.org/) via Serde.MsgPack:

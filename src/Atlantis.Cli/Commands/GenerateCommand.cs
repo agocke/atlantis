@@ -26,11 +26,14 @@ public static class GenerateCommand
 
         if (exports.Count == 0)
         {
-            Console.WriteLine("No [AtlExport] methods found.");
-            return 0;
+            // No [AtlExport] methods, but the bridge still carries the built-in
+            // atlantis.dialog/on/off API, so generate it anyway.
+            Console.WriteLine("No [AtlExport] methods found; generating the built-in bridge only.");
         }
-
-        Console.WriteLine($"Found {exports.Count} exported method(s) in {exports.Select(e => e.ClassName).Distinct().Count()} class(es).");
+        else
+        {
+            Console.WriteLine($"Found {exports.Count} exported method(s) in {exports.Select(e => e.ClassName).Distinct().Count()} class(es).");
+        }
 
         Directory.CreateDirectory(outputDir);
 

@@ -19,7 +19,7 @@ namespace Atlantis;
 /// (https://github.com/tryphotino/photino.Native).
 /// </remarks>
 [SupportedOSPlatform("linux")]
-internal sealed unsafe class LinuxWebViewHost : IBridgeTransport
+internal sealed unsafe class LinuxWebViewHost : IBridgeTransport, IFileDialogProvider
 {
     // The WebKit script message handler name JavaScript posts to (see InitScript).
     private const string MessageHandlerName = "atlantisinterop";
@@ -42,6 +42,7 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport
         """;
 
     private readonly IntPtr _webview;
+    private readonly IntPtr _window;
 
     private static LinuxWebViewHost? _current;
 
@@ -51,7 +52,11 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport
     public Task<ReadOnlyMemory<byte>> ReceiveAsync(CancellationToken cancellationToken = default)
         => _incoming.Reader.ReadAsync(cancellationToken).AsTask();
 
-    private LinuxWebViewHost(IntPtr webview) => _webview = webview;
+    private LinuxWebViewHost(IntPtr webview, IntPtr window)
+    {
+        _webview = webview;
+        _window = window;
+    }
 
     public static void Run(string title, string html, Action<BridgeHost>? configure)
     {
@@ -85,18 +90,94 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport
             (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)&OnScriptMessage, IntPtr.Zero);
         webkit_user_content_manager_register_script_message_handler(contentManager, MessageHandlerName);
 
-        var host = new LinuxWebViewHost(webview);
+        var host = new LinuxWebViewHost(webview, window);
         _current = host;
+        Dialog.Provider = host;
         using var pumpCts = new CancellationTokenSource();
-        if (configure is not null)
-            BridgeHost.Attach(host, configure, pumpCts.Token);
+        BridgeHost.Attach(host, configure, pumpCts.Token);
 
         webkit_web_view_load_html(webview, html, IntPtr.Zero);
         gtk_widget_show_all(window);
 
         gtk_main();
         pumpCts.Cancel();
+        Dialog.Provider = null;
         _current = null;
+    }
+
+    /// <summary>
+    /// Show a GtkFileChooserNative for files or folders and return the selected paths.
+    /// GTK is single-threaded, so the dialog is run on the GTK main loop while the calling
+    /// (worker) thread blocks until it closes.
+    /// </summary>
+    public string[] ShowOpen(OpenDialogOptions options)
+    {
+        string[] result = [];
+        using var done = new ManualResetEventSlim(false);
+        var handle = GCHandle.Alloc((Action)(() =>
+        {
+            try { result = ShowOpenOnMain(options); }
+            finally { done.Set(); }
+        }));
+        g_idle_add((IntPtr)(delegate* unmanaged<IntPtr, int>)&RunIdleAction, GCHandle.ToIntPtr(handle));
+        done.Wait();
+        return result;
+    }
+
+    private string[] ShowOpenOnMain(OpenDialogOptions options)
+    {
+        // GTK_FILE_CHOOSER_ACTION_OPEN == 0, GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER == 2.
+        int action = options.Directories ? 2 : 0;
+        IntPtr dialog = gtk_file_chooser_native_new(options.Title, _window, action, "_Open", "_Cancel");
+        if (options.AllowMultiple)
+        {
+            gtk_file_chooser_set_select_multiple(dialog, true);
+        }
+        if (!string.IsNullOrEmpty(options.InitialDirectory))
+        {
+            gtk_file_chooser_set_current_folder(dialog, options.InitialDirectory);
+        }
+
+        string[] result = [];
+        // GTK_RESPONSE_ACCEPT == -3.
+        if (gtk_native_dialog_run(dialog) == -3)
+        {
+            result = options.AllowMultiple
+                ? DrainStringSList(gtk_file_chooser_get_filenames(dialog))
+                : TakeSingleFilename(gtk_file_chooser_get_filename(dialog));
+        }
+
+        g_object_unref(dialog);
+        return result;
+    }
+
+    private static string[] TakeSingleFilename(IntPtr path)
+    {
+        if (path == IntPtr.Zero)
+        {
+            return [];
+        }
+        string[] result = [Marshal.PtrToStringUTF8(path) ?? ""];
+        g_free(path);
+        return result;
+    }
+
+    // Walk a GSList of newly-allocated UTF-8 path strings, freeing each element's data and
+    // the list itself (the GSList struct is { gpointer data; GSList* next; }).
+    private static string[] DrainStringSList(IntPtr list)
+    {
+        var paths = new List<string>();
+        for (IntPtr node = list; node != IntPtr.Zero; node = *(IntPtr*)(node + IntPtr.Size))
+        {
+            IntPtr data = *(IntPtr*)node;
+            if (data != IntPtr.Zero)
+            {
+                paths.Add(Marshal.PtrToStringUTF8(data) ?? "");
+                g_free(data);
+            }
+        }
+        g_slist_free(list);
+        return paths.ToArray();
     }
 
     /// <summary>Push a raw UTF-8 message to the webview by invoking the JS dispatch shim.</summary>
@@ -224,6 +305,18 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport
     [DllImport(Gtk)] private static extern void gtk_main();
     [DllImport(Gtk)] private static extern void gtk_main_quit();
 
+    [DllImport(Gtk, CharSet = CharSet.Ansi)]
+    private static extern IntPtr gtk_file_chooser_native_new(string? title, IntPtr parent, int action, string? acceptLabel, string? cancelLabel);
+
+    [DllImport(Gtk)] private static extern int gtk_native_dialog_run(IntPtr dialog);
+    [DllImport(Gtk)] private static extern void gtk_file_chooser_set_select_multiple(IntPtr chooser, [MarshalAs(UnmanagedType.I1)] bool select);
+
+    [DllImport(Gtk, CharSet = CharSet.Ansi)]
+    private static extern bool gtk_file_chooser_set_current_folder(IntPtr chooser, string folder);
+
+    [DllImport(Gtk)] private static extern IntPtr gtk_file_chooser_get_filename(IntPtr chooser);
+    [DllImport(Gtk)] private static extern IntPtr gtk_file_chooser_get_filenames(IntPtr chooser);
+
     [DllImport(WebKit)] private static extern IntPtr webkit_user_content_manager_new();
     [DllImport(WebKit)] private static extern IntPtr webkit_web_view_new_with_user_content_manager(IntPtr contentManager);
 
@@ -249,7 +342,10 @@ internal sealed unsafe class LinuxWebViewHost : IBridgeTransport
     [DllImport(Jsc)] private static extern IntPtr jsc_value_to_string(IntPtr value);
 
     [DllImport(GLib)] private static extern void g_free(IntPtr mem);
+    [DllImport(GLib)] private static extern void g_slist_free(IntPtr list);
     [DllImport(GLib)] private static extern uint g_idle_add(IntPtr function, IntPtr data);
+
+    [DllImport(GObject)] private static extern void g_object_unref(IntPtr obj);
 
     [DllImport(GObject, CharSet = CharSet.Ansi)]
     private static extern ulong g_signal_connect_data(IntPtr instance, string detailedSignal, IntPtr handler, IntPtr data, IntPtr destroyData, int connectFlags);
