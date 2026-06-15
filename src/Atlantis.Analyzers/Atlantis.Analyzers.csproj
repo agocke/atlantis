@@ -15,7 +15,7 @@
 
     <!-- NuGet package metadata -->
     <PackageId>Atlantis.Analyzers</PackageId>
-    <VersionPrefix>0.1.0</VersionPrefix>
+    <VersionPrefix>0.2.0</VersionPrefix>
     <Description>Roslyn analyzers and code fixes for Atlantis projects</Description>
     <PackageTags>analyzers;atlantis</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
