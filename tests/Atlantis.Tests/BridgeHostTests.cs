@@ -60,6 +60,10 @@ public class BridgeHostTests
         return JsonDocument.Parse(json).RootElement.Clone();
     }
 
+    // Handlers now receive the args array as raw UTF-8 JSON. Decode it for assertions;
+    // the bridge itself is serializer-agnostic, so a test picks its own decoder here.
+    private static JsonElement A(ReadOnlyMemory<byte> args) => JsonDocument.Parse(args).RootElement;
+
     [Fact]
     public async Task Request_invokes_handler_and_returns_result()
     {
@@ -68,7 +72,7 @@ public class BridgeHostTests
         {
             host.Register("Calc.Add", (args, _) =>
             {
-                int sum = args[0].GetInt32() + args[1].GetInt32();
+                int sum = A(args)[0].GetInt32() + A(args)[1].GetInt32();
                 return Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes(sum.ToString()));
             });
 
@@ -89,7 +93,7 @@ public class BridgeHostTests
         {
             host.Register("Echo.Concat", (args, _) =>
             {
-                string joined = args[0].GetString() + args[1].GetString();
+                string joined = A(args)[0].GetString() + A(args)[1].GetString();
                 return Task.FromResult<ReadOnlyMemory<byte>?>(JsonSerializer.SerializeToUtf8Bytes(joined));
             });
 
@@ -196,7 +200,7 @@ public class BridgeHostTests
         using (pump)
         {
             host.Register("Calc.Add", (args, _) =>
-                Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes((args[0].GetInt32() + args[1].GetInt32()).ToString())));
+                Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes((A(args)[0].GetInt32() + A(args)[1].GetInt32()).ToString())));
 
             // A valid leading callId but a malformed args tail: the structured parse
             // fails, yet the host recovers the callId so the exact caller is rejected
@@ -216,7 +220,7 @@ public class BridgeHostTests
         using (pump)
         {
             host.Register("Calc.Add", (args, _) =>
-                Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes((args[0].GetInt32() + args[1].GetInt32()).ToString())));
+                Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes((A(args)[0].GetInt32() + A(args)[1].GetInt32()).ToString())));
 
             // A frame with no callId has no caller to answer, so the host can't reject a
             // specific promise - but it still sends a callId-less error frame so the
@@ -241,7 +245,7 @@ public class BridgeHostTests
         using (pump)
         {
             host.Register("Calc.Add", (args, _) =>
-                Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes((args[0].GetInt32() + args[1].GetInt32()).ToString())));
+                Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes((A(args)[0].GetInt32() + A(args)[1].GetInt32()).ToString())));
 
             // Unparseable JSON can't be tied to a callId, but the host still reports the
             // parse error back to the client instead of swallowing it silently.

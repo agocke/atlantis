@@ -25,11 +25,17 @@ public sealed class BridgeHost
 {
     private readonly IBridgeTransport _transport;
 
+    // "[]" handed to a handler when a request carries no args, so handlers always
+    // receive a well-formed JSON array to decode.
+    private static readonly byte[] EmptyArgs = "[]"u8.ToArray();
+
     // Maps a fully-qualified "Class.Method" name to its handler. A handler receives
-    // the JSON args array and returns its result already serialized as UTF-8 JSON
-    // (or null for a void result), keeping the bridge free of reflection and the
-    // app's concrete types so it stays Native AOT safe.
-    private readonly Dictionary<string, Func<JsonElement, CancellationToken, Task<ReadOnlyMemory<byte>?>>> _handlers
+    // the args array as raw UTF-8 JSON and returns its result already serialized as
+    // UTF-8 JSON (or null for a void result). The bridge never inspects either
+    // payload, so a handler is free to (de)serialize them with any JSON library it
+    // likes; the bridge itself stays free of reflection and the app's concrete types
+    // so it stays Native AOT safe.
+    private readonly Dictionary<string, Func<ReadOnlyMemory<byte>, CancellationToken, Task<ReadOnlyMemory<byte>?>>> _handlers
         = new(StringComparer.Ordinal);
 
     internal BridgeHost(IBridgeTransport transport)
@@ -53,10 +59,12 @@ public sealed class BridgeHost
 
     /// <summary>
     /// Register a handler for the fully-qualified <paramref name="method"/> name,
-    /// e.g. <c>"Api.Hello"</c>. The handler returns its result as already-serialized
-    /// UTF-8 JSON, or <c>null</c> for a void result.
+    /// e.g. <c>"Api.Hello"</c>. The handler receives the call's <c>args</c> array as
+    /// raw UTF-8 JSON and returns its result as already-serialized UTF-8 JSON, or
+    /// <c>null</c> for a void result. The bridge treats both as opaque bytes, so the
+    /// handler may decode the args and encode the result with any JSON serializer.
     /// </summary>
-    public void Register(string method, Func<JsonElement, CancellationToken, Task<ReadOnlyMemory<byte>?>> handler)
+    public void Register(string method, Func<ReadOnlyMemory<byte>, CancellationToken, Task<ReadOnlyMemory<byte>?>> handler)
         => _handlers[method] = handler;
 
     /// <summary>
@@ -163,7 +171,7 @@ public sealed class BridgeHost
                 return;
             }
 
-            var result = await handler(request.Args, cancellationToken).ConfigureAwait(false);
+            var result = await handler(RawArgs(request.Args), cancellationToken).ConfigureAwait(false);
             await SendResult(callId, result).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -173,6 +181,21 @@ public sealed class BridgeHost
             try { await SendError(callId, ex.Message).ConfigureAwait(false); }
             catch { }
         }
+    }
+
+    // The envelope is parsed with the source-generated context, leaving the args as a
+    // JsonElement. Re-emit just that element as raw UTF-8 JSON so handlers receive
+    // serializer-agnostic bytes rather than a System.Text.Json type. A request with no
+    // args yields an empty array so handlers always get a well-formed JSON array.
+    private static ReadOnlyMemory<byte> RawArgs(JsonElement args)
+    {
+        if (args.ValueKind is JsonValueKind.Undefined)
+            return EmptyArgs;
+
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+            args.WriteTo(writer);
+        return buffer.WrittenMemory;
     }
 
     // Best-effort scan to pull "callId" out of a frame the structured parse rejected, so
