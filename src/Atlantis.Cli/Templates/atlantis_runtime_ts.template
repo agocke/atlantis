@@ -1,4 +1,36 @@
-{{Header}}
+// Atlantis framework runtime. This file is part of the framework and is NOT
+// generated from your [AtlExport] methods; the typed per-class bindings live in
+// atlantis.bindings.ts. Both files compile together into a single atlantis.js.
+
+// The core surface provided by the framework runtime.
+interface AtlantisCore {
+  // Built-in native dialogs, provided by the Atlantis host (not generated from
+  // [AtlExport]). Each returns the chosen filesystem path(s); openFile/openFolder
+  // resolve to null when the user cancels, openFiles to an empty array.
+  dialog: {
+    openFile(title?: string): Promise<string | null>;
+    openFiles(title?: string): Promise<string[]>;
+    openFolder(title?: string): Promise<string | null>;
+  };
+  on(channel: string, callback: (payload: any) => void): () => void;
+  off(channel: string, callback: (payload: any) => void): void;
+  onError(callback: (error: Error) => void): () => void;
+  offError(callback: (error: Error) => void): void;
+}
+
+// The full public surface. Generated bindings (atlantis.bindings.ts) augment this
+// interface with one namespace per exported class via declaration merging, so the
+// framework runtime never needs to know about specific [AtlExport] methods.
+interface Atlantis extends AtlantisCore {}
+
+// Signature of the framework's private transport. Generated binding factories
+// receive this so user code never touches the host message plumbing directly.
+type AtlantisInvoke = (method: string, args: any[]) => Promise<any>;
+
+// Assigned by the runtime below. Generated bindings call this to attach their
+// typed namespaces onto the atlantis object using the framework's private
+// _invoke, keeping user code in a separate file from the runtime.
+let _atlRegister: (register: (invoke: AtlantisInvoke) => void) => void;
 
 const atlantis = (() => {
   const _host = (window as any).external as {
@@ -77,9 +109,6 @@ const atlantis = (() => {
     _errorHandlers.delete(callback);
   }
 
-  // Built-in native dialogs, provided by the Atlantis host (not generated from
-  // [AtlExport]). Each returns the chosen filesystem path(s); openFile/openFolder
-  // resolve to null when the user cancels, openFiles to an empty array.
   const dialog = {
     openFile: (title?: string): Promise<string | null> =>
       _invoke('Atlantis.Dialog.OpenFile', title === undefined ? [] : [title]),
@@ -89,11 +118,9 @@ const atlantis = (() => {
       _invoke('Atlantis.Dialog.OpenFolder', title === undefined ? [] : [title]),
   };
 
-{{Bindings}}  return {
-{{Exports}}    dialog,
-    on,
-    off,
-    onError,
-    offError,
-  };
-})();
+  // Hand the framework's private _invoke to generated binding factories so they
+  // can attach typed namespaces onto atlantis without seeing transport internals.
+  _atlRegister = (register) => register(_invoke);
+
+  return { dialog, on, off, onError, offError };
+})() as Atlantis;

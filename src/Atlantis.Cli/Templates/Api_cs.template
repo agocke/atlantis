@@ -1,15 +1,11 @@
+using Atlantis;
+
 namespace {{ProjectName}};
 
 /// <summary>
-/// Marks a method for export to JavaScript via the Atlantis bridge.
-/// Run 'atl bindgen' to regenerate atlantis.js and atlantis.d.ts.
-/// </summary>
-[AttributeUsage(AttributeTargets.Method)]
-public sealed class AtlExportAttribute : Attribute { }
-
-/// <summary>
 /// API methods exposed to JavaScript via the Atlantis bridge.
-/// Mark methods with [AtlExport] to make them callable from the webview.
+/// Mark methods with [AtlExport] (from the Atlantis framework) to make them
+/// callable from the webview.
 /// Run 'atl bindgen' to regenerate atlantis.js and atlantis.d.ts.
 /// </summary>
 public static partial class Api
