@@ -1,0 +1,14 @@
+{{Header}}
+//
+// Generated from the [AtlExport] methods in the matching .cs file. This file holds
+// only that file's API surface; the framework runtime lives in atlantis.runtime.ts.
+// All bindings compile together into a single atlantis.js. Regenerate with: atl bindgen
+
+// Typed per-class API, merged into the framework's Atlantis surface.
+interface Atlantis {
+{{InterfaceMembers}}}
+
+// Attach the bindings onto the atlantis object using the framework's private
+// transport (_invoke), handed in by atlantis.runtime.ts.
+_atlRegister((_invoke) => {
+{{Bindings}}});

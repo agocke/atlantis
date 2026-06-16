@@ -5,7 +5,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Atlantis.Cli.Commands;
 
-internal record ExportedMethod(string ClassName, string MethodName, string ReturnType, List<MethodParameter> Parameters);
+internal record ExportedMethod(string ClassName, string MethodName, string ReturnType, List<MethodParameter> Parameters, string SourceFile);
 internal record MethodParameter(string Name, string Type);
 
 /// <summary>
@@ -54,7 +54,8 @@ internal static class ExportScanner
                         className,
                         method.Identifier.Text,
                         method.ReturnType.ToString(),
-                        parameters));
+                        parameters,
+                        file));
                 }
             }
         }
@@ -124,26 +125,47 @@ internal static class ExportScanner
 
     /// <summary>
     /// Warn (without blocking) when a project's [AtlExport] surface no longer matches
-    /// its generated frontend/atlantis.js. Called by 'atl run' and 'atl build'.
+    /// its generated frontend/&lt;name&gt;.bindings.ts files. Called by 'atl run' and
+    /// 'atl build'. Reports both stale/missing bindings and orphaned bindings whose
+    /// source file no longer has any [AtlExport] methods.
     /// </summary>
     public static async Task WarnIfBindingsStaleAsync(string projectDir)
     {
         var exports = await ScanAsync(projectDir);
-        if (exports.Count == 0)
-            return;
+        var frontendDir = Path.Combine(projectDir, "frontend");
 
-        var jsPath = Path.Combine(projectDir, "frontend", "atlantis.js");
-        var embedded = ReadEmbeddedHash(jsPath);
+        // Expected: one <name>.bindings.ts per source file, carrying a hash of that
+        // file's export contract.
+        var expected = exports
+            .GroupBy(e => e.SourceFile)
+            .ToDictionary(
+                g => Path.GetFileNameWithoutExtension(g.Key) + ".bindings.ts",
+                ComputeInputHash,
+                StringComparer.Ordinal);
 
-        if (embedded == null)
-        {
-            Console.Error.WriteLine("warning: no generated bindings found at frontend/atlantis.js. Run 'atl bindgen'.");
-            return;
-        }
+        var existing = Directory.Exists(frontendDir)
+            ? Directory.EnumerateFiles(frontendDir, "*.bindings.ts")
+                .Select(Path.GetFileName)
+                .OfType<string>()
+                .ToHashSet(StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
 
-        if (!string.Equals(embedded, ComputeInputHash(exports), StringComparison.Ordinal))
-        {
-            Console.Error.WriteLine("warning: the [AtlExport] API has changed since bindings were generated; frontend/atlantis.js is out of date. Run 'atl bindgen'.");
-        }
+        var stale = expected
+            .Where(kvp => ReadEmbeddedHash(Path.Combine(frontendDir, kvp.Key)) is not { } h
+                          || !string.Equals(h, kvp.Value, StringComparison.Ordinal))
+            .Select(kvp => kvp.Key)
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToList();
+
+        var orphaned = existing
+            .Where(n => !expected.ContainsKey(n))
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToList();
+
+        if (stale.Count > 0)
+            Console.Error.WriteLine($"warning: bindings out of date for {string.Join(", ", stale)}; run 'atl bindgen'.");
+
+        if (orphaned.Count > 0)
+            Console.Error.WriteLine($"warning: orphaned bindings {string.Join(", ", orphaned)} no longer match any [AtlExport] source; run 'atl bindgen'.");
     }
 }

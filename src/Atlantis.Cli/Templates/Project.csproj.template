@@ -28,9 +28,9 @@
   </ItemGroup>
 
   <!-- Embed the web frontend (index.html + compiled atlantis.js) from inside the
-       project. The atlantis.ts source and atlantis.d.ts types are excluded; tsc
-       compiles atlantis.ts into atlantis.js. Regenerate the bridge from this
-       directory with: atl bindgen -->
+       project. The atlantis.runtime.ts and *.bindings.ts sources and the
+       atlantis.d.ts types are excluded; tsc compiles the sources into atlantis.js.
+       Regenerate the bridge from this directory with: atl bindgen -->
   <ItemGroup>
     <EmbeddedResource Include="frontend/**/*" Exclude="frontend/**/*.ts" LinkBase="frontend" />
   </ItemGroup>
