@@ -51,7 +51,7 @@ public static class FixCommand
 
         // Run Atlantis analyzers
         var result = await RunDotnetAsync(
-            BuildFormatArgs(projectPath, ["ATL001", "ATL002", "ATL003"], dryRun, verbose),
+            BuildFormatArgs(projectPath, ["ATL001", "ATL003"], dryRun, verbose),
             verbose,
             swallowError: dryRun);
 

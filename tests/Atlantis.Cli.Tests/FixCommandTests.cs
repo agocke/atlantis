@@ -161,10 +161,10 @@ public class FixCommandArgsTests
     [Fact]
     public void BuildFormatArgs_IncludesDiagnostics()
     {
-        var args = FixCommand.BuildFormatArgs("/repo/MyApp.csproj", ["ATL001", "ATL002"], dryRun: false, verbose: false);
+        var args = FixCommand.BuildFormatArgs("/repo/MyApp.csproj", ["ATL001", "ATL003"], dryRun: false, verbose: false);
 
         Assert.Equal(
-            ["format", "analyzers", "/repo/MyApp.csproj", "--diagnostics", "ATL001", "ATL002", "--verbosity", "quiet"],
+            ["format", "analyzers", "/repo/MyApp.csproj", "--diagnostics", "ATL001", "ATL003", "--verbosity", "quiet"],
             args);
     }
 

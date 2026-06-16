@@ -13,7 +13,6 @@ Roslyn analyzers and code fixes for [Atlantis](https://github.com/atlantis-frame
 | ID | Severity | Description |
 |----|----------|-------------|
 | ATL001 | Warning | `[JSExport]` is deprecated. Use `[AtlExport]` instead. |
-| ATL002 | Error | `[AtlExport]` requires the `AtlExportAttribute` class to be defined. |
 | ATL003 | Info | `System.Runtime.InteropServices.JavaScript` using is not needed for Atlantis. |
 
 ## Usage
