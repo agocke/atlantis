@@ -93,6 +93,11 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport, IFileDialogProvi
         IntPtr nsApp = SendPtr(Class("NSApplication"), Sel("sharedApplication"));
         SendVoid(nsApp, Sel("setActivationPolicy:"), IntPtr.Zero); // NSApplicationActivationPolicyRegular
 
+        // Without a main menu carrying the standard Edit items, AppKit never routes
+        // the ⌘C/⌘X/⌘V/⌘A key equivalents through the responder chain to the focused
+        // WKWebView, so clipboard and select-all shortcuts silently do nothing.
+        InstallMainMenu(nsApp);
+
         // App delegate so closing the last window ends the run loop.
         IntPtr appDelegate = SendPtr(SendPtr(_appDelegateClass, Sel("alloc")), Sel("init"));
         SendVoid(nsApp, Sel("setDelegate:"), appDelegate);
@@ -393,6 +398,51 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport, IFileDialogProvi
 
     // ---- Small helpers over the Objective-C runtime ----
 
+    /// <summary>
+    /// Build a minimal main menu with a standard Edit submenu and install it on the
+    /// application. The items target nil (the first responder), so AppKit dispatches
+    /// the key equivalents through the responder chain to the focused web view, which
+    /// is what makes copy/cut/paste/select-all work natively inside WKWebView.
+    /// </summary>
+    private static void InstallMainMenu(IntPtr nsApp)
+    {
+        IntPtr mainMenu = SendPtr(SendPtr(Class("NSMenu"), Sel("alloc")), Sel("init"));
+
+        // Top-level item that owns the Edit submenu.
+        IntPtr editItem = SendPtr(SendPtr(Class("NSMenuItem"), Sel("alloc")), Sel("init"));
+        SendVoid(mainMenu, Sel("addItem:"), editItem);
+
+        IntPtr editMenu = SendPtr(Class("NSMenu"), Sel("alloc"));
+        WithNSString("Edit", title => editMenu = SendPtr(editMenu, Sel("initWithTitle:"), title));
+        SendVoid(editItem, Sel("setSubmenu:"), editMenu);
+
+        AddMenuItem(editMenu, "Undo", "undo:", "z");
+        AddMenuItem(editMenu, "Redo", "redo:", "Z");
+        SendVoid(editMenu, Sel("addItem:"), SendPtr(Class("NSMenuItem"), Sel("separatorItem")));
+        AddMenuItem(editMenu, "Cut", "cut:", "x");
+        AddMenuItem(editMenu, "Copy", "copy:", "c");
+        AddMenuItem(editMenu, "Paste", "paste:", "v");
+        AddMenuItem(editMenu, "Select All", "selectAll:", "a");
+
+        SendVoid(nsApp, Sel("setMainMenu:"), mainMenu);
+    }
+
+    /// <summary>
+    /// Append an NSMenuItem wired to an AppKit selector and key equivalent. The action
+    /// target is left as nil so the command travels up the responder chain.
+    /// </summary>
+    private static void AddMenuItem(IntPtr menu, string title, string selector, string keyEquivalent)
+    {
+        IntPtr item = SendPtr(Class("NSMenuItem"), Sel("alloc"));
+        IntPtr action = Sel(selector);
+        WithNSString(title, t =>
+            WithNSString(keyEquivalent, key =>
+            {
+                IntPtr created = SendPtr(item, Sel("initWithTitle:action:keyEquivalent:"), t, action, key);
+                SendVoid(menu, Sel("addItem:"), created);
+            }));
+    }
+
     private static IntPtr Class(string name) => objc_getClass(name);
 
     private static IntPtr Sel(string name) => sel_registerName(name);
@@ -475,6 +525,9 @@ internal sealed unsafe class MacWebViewHost : IBridgeTransport, IFileDialogProvi
 
     [DllImport(LibObjC, EntryPoint = "objc_msgSend")]
     private static extern IntPtr SendPtr(IntPtr receiver, IntPtr selector, IntPtr arg0);
+
+    [DllImport(LibObjC, EntryPoint = "objc_msgSend")]
+    private static extern IntPtr SendPtr(IntPtr receiver, IntPtr selector, IntPtr arg0, IntPtr arg1, IntPtr arg2);
 
     [DllImport(LibObjC, EntryPoint = "objc_msgSend")]
     private static extern IntPtr SendPtrIndex(IntPtr receiver, IntPtr selector, nuint arg0);
