@@ -79,14 +79,14 @@ public static class Dialog
     /// </summary>
     internal static void RegisterBridge(BridgeHost bridge)
     {
-        bridge.Register("Atlantis.Dialog.OpenFile", (args, _) =>
-            Task.FromResult<ReadOnlyMemory<byte>?>(SerializeSingle(OpenFile(TitleArg(args)))));
+        bridge.Register("Atlantis.Dialog.OpenFile", async (args, _) =>
+            SerializeSingle(OpenFile(TitleArg(args))));
 
-        bridge.Register("Atlantis.Dialog.OpenFiles", (args, _) =>
-            Task.FromResult<ReadOnlyMemory<byte>?>(SerializeMany(OpenFiles(TitleArg(args)))));
+        bridge.Register("Atlantis.Dialog.OpenFiles", async (args, _) =>
+            SerializeMany(OpenFiles(TitleArg(args))));
 
-        bridge.Register("Atlantis.Dialog.OpenFolder", (args, _) =>
-            Task.FromResult<ReadOnlyMemory<byte>?>(SerializeSingle(OpenFolder(TitleArg(args)))));
+        bridge.Register("Atlantis.Dialog.OpenFolder", async (args, _) =>
+            SerializeSingle(OpenFolder(TitleArg(args))));
     }
 
     // The first arg, when present and a JSON string, is the dialog title. The bridge
