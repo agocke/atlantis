@@ -79,21 +79,28 @@ public static class Dialog
     /// </summary>
     internal static void RegisterBridge(BridgeHost bridge)
     {
-        bridge.Register("Atlantis.Dialog.OpenFile", (args, _) =>
-            Task.FromResult<ReadOnlyMemory<byte>?>(SerializeSingle(OpenFile(TitleArg(args)))));
+        bridge.Register("Atlantis.Dialog.OpenFile", async (args, _) =>
+            SerializeSingle(OpenFile(TitleArg(args))));
 
-        bridge.Register("Atlantis.Dialog.OpenFiles", (args, _) =>
-            Task.FromResult<ReadOnlyMemory<byte>?>(SerializeMany(OpenFiles(TitleArg(args)))));
+        bridge.Register("Atlantis.Dialog.OpenFiles", async (args, _) =>
+            SerializeMany(OpenFiles(TitleArg(args))));
 
-        bridge.Register("Atlantis.Dialog.OpenFolder", (args, _) =>
-            Task.FromResult<ReadOnlyMemory<byte>?>(SerializeSingle(OpenFolder(TitleArg(args)))));
+        bridge.Register("Atlantis.Dialog.OpenFolder", async (args, _) =>
+            SerializeSingle(OpenFolder(TitleArg(args))));
     }
 
-    // The first arg, when present and a JSON string, is the dialog title.
-    private static string? TitleArg(JsonElement args)
-        => args.ValueKind == JsonValueKind.Array && args.GetArrayLength() > 0 && args[0].ValueKind == JsonValueKind.String
-            ? args[0].GetString()
-            : null;
+    // The first arg, when present and a JSON string, is the dialog title. The bridge
+    // hands handlers the raw UTF-8 JSON args array, so read it directly without
+    // materializing the whole array.
+    private static string? TitleArg(ReadOnlyMemory<byte> args)
+    {
+        var reader = new Utf8JsonReader(args.Span);
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray)
+            return null;
+        if (!reader.Read() || reader.TokenType != JsonTokenType.String)
+            return null;
+        return reader.GetString();
+    }
 
     // Serialize a nullable path as a JSON string or null, without reflection (AOT safe).
     private static ReadOnlyMemory<byte> SerializeSingle(string? path)

@@ -13,6 +13,11 @@
     <IsAotCompatible>true</IsAotCompatible>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
+    <!-- Bridge handlers (e.g. the built-in Dialog handlers) are declared as async
+         delegates for a uniform shape, but some do purely synchronous work; suppress
+         CS1998 rather than wrap them in Task.FromResult. -->
+    <NoWarn>$(NoWarn);CS1998</NoWarn>
+
     <!--
       Platform leg selected at build time. The same sources compile into two
       assemblies with the same identity but different webview hosts:

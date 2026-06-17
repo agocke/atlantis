@@ -60,16 +60,20 @@ public class BridgeHostTests
         return JsonDocument.Parse(json).RootElement.Clone();
     }
 
+    // Handlers now receive the args array as raw UTF-8 JSON. Decode it for assertions;
+    // the bridge itself is serializer-agnostic, so a test picks its own decoder here.
+    private static JsonElement A(ReadOnlyMemory<byte> args) => JsonDocument.Parse(args).RootElement;
+
     [Fact]
     public async Task Request_invokes_handler_and_returns_result()
     {
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Calc.Add", (args, _) =>
+            host.Register("Calc.Add", async (args, _) =>
             {
-                int sum = args[0].GetInt32() + args[1].GetInt32();
-                return Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes(sum.ToString()));
+                int sum = A(args)[0].GetInt32() + A(args)[1].GetInt32();
+                return (ReadOnlyMemory<byte>?)Encoding.UTF8.GetBytes(sum.ToString());
             });
 
             transport.Post("""{"callId":1,"method":"Calc.Add","args":[2,3]}""");
@@ -87,10 +91,10 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Echo.Concat", (args, _) =>
+            host.Register("Echo.Concat", async (args, _) =>
             {
-                string joined = args[0].GetString() + args[1].GetString();
-                return Task.FromResult<ReadOnlyMemory<byte>?>(JsonSerializer.SerializeToUtf8Bytes(joined));
+                string joined = A(args)[0].GetString() + A(args)[1].GetString();
+                return (ReadOnlyMemory<byte>?)JsonSerializer.SerializeToUtf8Bytes(joined);
             });
 
             transport.Post("""{"callId":7,"method":"Echo.Concat","args":["foo","bar"]}""");
@@ -107,7 +111,7 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Logger.Log", (_, _) => Task.FromResult<ReadOnlyMemory<byte>?>(null));
+            host.Register("Logger.Log", async (_, _) => (ReadOnlyMemory<byte>?)null);
 
             transport.Post("""{"callId":2,"method":"Logger.Log","args":["hi"]}""");
 
@@ -153,8 +157,8 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Calc.Add", (_, _) => Task.FromResult<ReadOnlyMemory<byte>?>("1"u8.ToArray()));
-            host.Register("Calc.Add", (_, _) => Task.FromResult<ReadOnlyMemory<byte>?>("2"u8.ToArray()));
+            host.Register("Calc.Add", async (_, _) => (ReadOnlyMemory<byte>?)"1"u8.ToArray());
+            host.Register("Calc.Add", async (_, _) => (ReadOnlyMemory<byte>?)"2"u8.ToArray());
 
             transport.Post("""{"callId":1,"method":"Calc.Add","args":[]}""");
 
@@ -195,8 +199,8 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Calc.Add", (args, _) =>
-                Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes((args[0].GetInt32() + args[1].GetInt32()).ToString())));
+            host.Register("Calc.Add", async (args, _) =>
+                (ReadOnlyMemory<byte>?)Encoding.UTF8.GetBytes((A(args)[0].GetInt32() + A(args)[1].GetInt32()).ToString()));
 
             // A valid leading callId but a malformed args tail: the structured parse
             // fails, yet the host recovers the callId so the exact caller is rejected
@@ -215,8 +219,8 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Calc.Add", (args, _) =>
-                Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes((args[0].GetInt32() + args[1].GetInt32()).ToString())));
+            host.Register("Calc.Add", async (args, _) =>
+                (ReadOnlyMemory<byte>?)Encoding.UTF8.GetBytes((A(args)[0].GetInt32() + A(args)[1].GetInt32()).ToString()));
 
             // A frame with no callId has no caller to answer, so the host can't reject a
             // specific promise - but it still sends a callId-less error frame so the
@@ -240,8 +244,8 @@ public class BridgeHostTests
         var (host, transport, pump) = Start();
         using (pump)
         {
-            host.Register("Calc.Add", (args, _) =>
-                Task.FromResult<ReadOnlyMemory<byte>?>(Encoding.UTF8.GetBytes((args[0].GetInt32() + args[1].GetInt32()).ToString())));
+            host.Register("Calc.Add", async (args, _) =>
+                (ReadOnlyMemory<byte>?)Encoding.UTF8.GetBytes((A(args)[0].GetInt32() + A(args)[1].GetInt32()).ToString()));
 
             // Unparseable JSON can't be tied to a callId, but the host still reports the
             // parse error back to the client instead of swallowing it silently.
