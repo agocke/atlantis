@@ -112,6 +112,7 @@ jobs:
         with:
           name: nuget-cli-${{ matrix.rid }}-${{ steps.version.outputs.version }}
           path: artifacts/package/release/*.nupkg
+          retention-days: 2
 
   publish-cli-nuget:
     needs: release-cli
