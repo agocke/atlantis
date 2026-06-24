@@ -86,6 +86,7 @@ jobs:
         with:
           name: nuget-cli-${{ matrix.rid }}
           path: artifacts/package/release/atl.*.nupkg
+          retention-days: 2
 
       - name: Upload Analyzer package
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.rid == 'linux-x64'
@@ -93,6 +94,7 @@ jobs:
         with:
           name: nuget-analyzers
           path: artifacts/package/release/Atlantis.Analyzers.*.nupkg
+          retention-days: 2
 
       - name: Upload Atlantis package
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.rid == 'linux-x64'
@@ -100,6 +102,7 @@ jobs:
         with:
           name: nuget-atlantis
           path: artifacts/package/release/Atlantis.Framework.[0-9]*.nupkg
+          retention-days: 2
 
   # Publish all packages to nuget.org after all builds complete
   publish-nuget:
