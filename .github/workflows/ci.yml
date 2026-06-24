@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
   id-token: write  # For OIDC trusted publishing to nuget.org
 
 jobs:
@@ -80,35 +79,27 @@ jobs:
         if: matrix.rid == 'linux-x64'
         run: dotnet pack src/Atlantis.Analyzers/Atlantis.Analyzers.csproj -c Release --no-build --version-suffix ${{ steps.version.outputs.suffix }}
 
-      # Upload artifacts
+      # Upload artifacts (only on main push, consumed by publish-nuget)
       - name: Upload CLI packages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: nuget-cli-${{ matrix.rid }}
           path: artifacts/package/release/atl.*.nupkg
 
       - name: Upload Analyzer package
-        if: matrix.rid == 'linux-x64'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.rid == 'linux-x64'
         uses: actions/upload-artifact@v4
         with:
           name: nuget-analyzers
           path: artifacts/package/release/Atlantis.Analyzers.*.nupkg
 
       - name: Upload Atlantis package
-        if: matrix.rid == 'linux-x64'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.rid == 'linux-x64'
         uses: actions/upload-artifact@v4
         with:
           name: nuget-atlantis
           path: artifacts/package/release/Atlantis.Framework.[0-9]*.nupkg
-
-      # Publish to GitHub Packages
-      - name: Push to GitHub Packages
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          for pkg in artifacts/package/release/*.nupkg; do
-            dotnet nuget push "$pkg" --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
-          done
 
   # Publish all packages to nuget.org after all builds complete
   publish-nuget:
